@@ -1,0 +1,35 @@
+{
+  "format": "basic",
+  "source": "SNMP",
+  "dateFormat": "M/d/yyyy",
+  "remarks": "Imported by QuMeter",
+  "identifyBy": "serial",
+  "repeatIdentityOnEachRow": true,
+  "columns": {
+    "equipmentNumber": "Equipment Number",
+    "model": "Model",
+    "serial": "Serial",
+    "mono": "B\\W",
+    "color": "Color",
+    "total": "Total Count",
+    "remarks": "Remarks",
+    "readingDate": "Reading Date"
+  },
+  "advancedColumns": {
+    "equipmentNumber": "Equipment Number",
+    "model": "Model",
+    "serial": "Serial",
+    "source": "Source",
+    "readingDate": "Reading Date",
+    "meterType": "Meter Type",
+    "reading": "Reading",
+    "credits": "Credits",
+    "remarks": "Remarks"
+  },
+  "meterTypeValues": {
+    "mono": "B\\W",
+    "color": "Color",
+    "total": "Total Count"
+  },
+  "notes": "Column names taken from official ECI e-automate Meter Import / Meter Import Advanced webhelp (https://webhelp.e-automate.com/cloud/Spreadsheet_Utilities/Data_Import_Utility/Meter_Import.htm). Official importer is .xlsx-only (EA_MeterImport.xlsx); paste rows under the template header on row 8. Source must be a non-system meter source in Lists and Codes (do not use Contract, Service Call, or Web)."
+}
