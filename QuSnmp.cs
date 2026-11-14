@@ -1125,4 +1125,46 @@ namespace QuMeterSnmp
             return list;
         }
     }
+    // Background scan with a pollable progress counter (no PowerShell callbacks on worker threads).
+    public class ScanJob
+    {
+        private int done;
+        private volatile bool completed;
+        private Thread worker;
+        public int Total;
+        public List<PrinterReading> Results;
+        public Exception Error;
+
+        public int Done { get { return Interlocked.CompareExchange(ref done, 0, 0); } }
+        public bool IsCompleted { get { return completed; } }
+
+        public static ScanJob Start(SnmpClient template, IList<string> hosts, int concurrency)
+        {
+            ScanJob job = new ScanJob();
+            job.Total = hosts.Count;
+            List<string> copy = new List<string>(hosts);
+            job.worker = new Thread(delegate()
+            {
+                try
+                {
+                    job.Results = PrinterQuery.QueryMany(template, copy, concurrency, delegate(int d, int t, PrinterReading r)
+                    {
+                        int cur;
+                        do { cur = Interlocked.CompareExchange(ref job.done, 0, 0); if (d <= cur) break; }
+                        while (Interlocked.CompareExchange(ref job.done, d, cur) != cur);
+                    });
+                }
+                catch (Exception ex) { job.Error = ex; }
+                finally { job.completed = true; }
+            });
+            job.worker.IsBackground = true;
+            job.worker.Start();
+            return job;
+        }
+
+        public bool Wait(int milliseconds)
+        {
+            return worker.Join(milliseconds);
+        }
+    }
 }
