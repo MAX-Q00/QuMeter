@@ -120,7 +120,7 @@ try {
     $mapping = Read-EaMapping -Path $mapPath
     if ($cfg.eaFormat) { $mapping.format = "$($cfg.eaFormat)" }
     if ($cfg.eaSource) { $mapping.source = "$($cfg.eaSource)" }
-    if (-not $mapping.remarks -or $mapping.remarks -eq 'Imported by QuMeter') { $mapping.remarks = 'Imported by QuMeter Auto' }
+    if ($null -ne $cfg.eaRemarks) { $mapping.remarks = [string]$cfg.eaRemarks }
 } catch { Fail 'config' "e-automate mapping file is invalid ($mapPath): $($_.Exception.Message)" }
 
 # ---- targets

@@ -139,6 +139,34 @@ function Convert-ReadingsToGeneralRows {
     return ,$rows
 }
 
+
+function Format-QuMeterRemarks {
+    param(
+        [string]$Template,
+        $Reading,
+        [string]$DateFormat = 'M/d/yyyy'
+    )
+    if ($null -eq $Template -or $Template -eq '') { return '' }
+    $when = Get-Date
+    if ($Reading -and $Reading.ReadAt -and $Reading.ReadAt -ne [datetime]::MinValue) { $when = $Reading.ReadAt }
+    $repl = @{
+        '{date}'   = $when.ToString($DateFormat)
+        '{time}'   = $when.ToString('HH:mm:ss')
+        '{ip}'     = $(if ($Reading) { [string]$Reading.Ip } else { '' })
+        '{serial}' = $(if ($Reading) { [string]$Reading.Serial } else { '' })
+        '{model}'  = $(if ($Reading) { [string]$Reading.Model } else { '' })
+    }
+    $s = [string]$Template
+    foreach ($token in @('{date}','{time}','{ip}','{serial}','{model}')) {
+        $value = $repl[$token]
+        $i = $s.IndexOf($token, [System.StringComparison]::OrdinalIgnoreCase)
+        while ($i -ge 0) {
+            $s = $s.Substring(0, $i) + $value + $s.Substring($i + $token.Length)
+            $i = $s.IndexOf($token, ($i + $value.Length), [System.StringComparison]::OrdinalIgnoreCase)
+        }
+    }
+    return $s
+}
 function Convert-ReadingsToEaBasicRows {
     param($Readings, $Mapping)
     $c = $Mapping.columns
@@ -156,7 +184,7 @@ function Convert-ReadingsToEaBasicRows {
             $c.mono            = $r.Mono
             $c.color           = $r.Color
             $c.total           = $r.Total
-            $c.remarks         = $Mapping.remarks
+            $c.remarks         = Format-QuMeterRemarks -Template $Mapping.remarks -Reading $r -DateFormat $dateFmt
             $c.readingDate     = $when.ToString($dateFmt)
         }
     }
@@ -190,7 +218,7 @@ function Convert-ReadingsToEaAdvancedRows {
                 $c.meterType       = $m.Type
                 $c.reading         = $m.Value
                 $c.credits         = ''
-                $c.remarks         = $Mapping.remarks
+                $c.remarks         = Format-QuMeterRemarks -Template $Mapping.remarks -Reading $r -DateFormat $dateFmt
             }
             $first = $false
         }

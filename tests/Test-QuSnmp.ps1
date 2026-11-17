@@ -1,4 +1,4 @@
-﻿# Unit + end-to-end tests for QuSnmp. Run from anywhere:
+# Unit + end-to-end tests for QuSnmp. Run from anywhere:
 #   pwsh -NoProfile -File /workspace/QuMeter/tests/Test-QuSnmp.ps1
 $ErrorActionPreference = 'Stop'
 $here = $PSScriptRoot
@@ -128,6 +128,25 @@ $ea2lines = @(Get-Content $ea2 | Select-Object -Skip 1 | Where-Object { $_.Trim(
 Assert-Eq $ea2lines.Count 0 'e-automate export skips rows with no serial'
 
 
+
+Write-Host '=== Remarks templates ==='
+Assert-Eq (Format-QuMeterRemarks -Template '' -Reading $r) '' 'empty remarks template stays blank'
+Assert-Eq (Format-QuMeterRemarks -Template 'Imported by QuMeter' -Reading $r) 'Imported by QuMeter' 'plain remarks unchanged'
+$tok = Format-QuMeterRemarks -Template '{date} {ip} {serial} {model}' -Reading $r -DateFormat 'M/d/yyyy'
+Assert-True ($tok -match '11/14/2026' -and $tok -match '10.0.0.9' -and $tok -match 'TESTSN001' -and $tok -match 'HP Color LaserJet E57540') 'remarks tokens date ip serial model'
+$quotedPath = Join-Path $tmp 'ea-remarks-comma.csv'
+$mapQ = Get-DefaultEaMapping
+$mapQ.remarks = 'Hello, "world" {serial}'
+Export-QuMeterEaCsv -Readings @($r) -Path $quotedPath -Mapping $mapQ
+$qTxt = Get-Content -LiteralPath $quotedPath -Raw
+Assert-True ($qTxt -match '"Hello, ""world"" TESTSN001"') 'remarks with comma and quotes are CSV-escaped'
+$blankPath = Join-Path $tmp 'ea-remarks-blank.csv'
+$mapB = Get-DefaultEaMapping
+$mapB.remarks = ''
+Export-QuMeterEaCsv -Readings @($r) -Path $blankPath -Mapping $mapB
+$bLine = @(Get-Content $blankPath | Select-Object -Skip 1)[0]
+Assert-True ($bLine -match '123456,,11/14/2026') 'empty remarks leave a blank CSV field'
+
 Write-Host '=== Timeout filter, responding IP list, Excel and import exports ==='
 function Get-TestXlsxXml([string]$Path, [string]$Entry) {
     Add-Type -AssemblyName System.IO.Compression.FileSystem
@@ -212,6 +231,7 @@ $port1 = 11611
 $port2 = 11612
 $ready1 = Join-Path $tmp 'ready1.txt'
 $ready2 = Join-Path $tmp 'ready2.txt'
+foreach ($rf in @($ready1, $ready2)) { if (Test-Path -LiteralPath $rf) { Remove-Item -LiteralPath $rf -Force } }
 $py = Join-Path $here 'snmp_sim.py'
 $python = $null
 foreach ($name in @('python','py','python3')) {

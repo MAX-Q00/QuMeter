@@ -47,6 +47,13 @@ Assert-Eq $r.community 'shopro' 'community round-trip'
 Assert-Eq $r.timeoutMs 2500 'timeout round-trip'
 Assert-Eq $r.retentionDays 30 'retention round-trip'
 Assert-Eq $r.eaFormat 'advanced' 'eaFormat round-trip'
+Assert-Eq $r.eaRemarks 'Imported by QuMeter' 'eaRemarks default when omitted'
+$c.eaRemarks = 'Hello, "shop" meters {serial}'
+Save-QmConfig -Config $c -Path (Join-Path $tmp 'remarks.json')
+Assert-Eq (Read-QmConfig (Join-Path $tmp 'remarks.json')).eaRemarks 'Hello, "shop" meters {serial}' 'eaRemarks with comma and quotes round-trip'
+$cBlank = Get-QmDefaultConfig; $cBlank.targets = @('10.0.0.1'); $cBlank.eaRemarks = ''
+Save-QmConfig -Config $cBlank -Path (Join-Path $tmp 'remarks-blank.json')
+Assert-Eq (Read-QmConfig (Join-Path $tmp 'remarks-blank.json')).eaRemarks '' 'empty eaRemarks stays blank'
 Assert-Eq $r.outputFolder '\\fileserver\meters' 'UNC output round-trip'
 Assert-Eq $r.schedule.frequency 'Monthly' 'frequency round-trip'
 Assert-Eq $r.schedule.dayOfMonth 'Last' 'dayOfMonth round-trip'
@@ -60,6 +67,7 @@ $pr = Read-QmConfig $partial
 Assert-Eq $pr.schedule.frequency 'Daily' 'missing nested keys fall back to defaults'
 Assert-Eq $pr.schedule.time '07:15' 'partial nested override kept'
 Assert-Eq $pr.deploy.installPath 'C:\ProgramData\QuMeter' 'deploy defaults present'
+Assert-Eq $pr.eaRemarks 'Imported by QuMeter' 'missing eaRemarks falls back to default'
 Assert-Eq (Test-QmConfig -Config $r -Root $tmp).Count 0 'valid config passes validation'
 $bad = Get-QmDefaultConfig; $bad.schedule.time = '25:00'; $bad.schedule.frequency = 'Weekly'; $bad.schedule.dayOfWeek = 'Funday'
 $errs = Test-QmConfig -Config $bad -Root $tmp
@@ -173,6 +181,7 @@ foreach ($f in @('QuMeterCore.ps1','QuMeterEngine.ps1','QuMeter.ps1','deploy/Ins
 Write-Host '=== Engine end-to-end (simulator) ==='
 $port = 11621
 $ready = Join-Path $tmp 'ready.txt'
+if (Test-Path -LiteralPath $ready) { Remove-Item -LiteralPath $ready -Force }
 $sim = Start-Process -FilePath $script:TestPython -ArgumentList @((Join-Path $here 'snmp_sim.py'),'--host','127.0.0.1','--port',"$port",'--profile','default','--ready-file',$ready) -PassThru -RedirectStandardError (Join-Path $tmp 'sim.err')
 try {
     $deadline = (Get-Date).AddSeconds(8); while (-not (Test-Path $ready) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 50 }
@@ -197,7 +206,7 @@ try {
     Assert-True (-not (Test-Path $old)) 'retention removed 60-day-old file'
     Assert-True (@(Get-ChildItem (Join-Path $inst 'logs') -Filter 'QuMeter_*.log').Count -eq 1) 'daily log written'
     $eaTxt = Get-Content (Get-ChildItem (Join-Path $inst 'output') -Filter 'QuMeter_eautomate_*.csv')[0].FullName -Raw
-    Assert-True ($eaTxt -match 'TESTSN001' -and $eaTxt -match 'Equipment Number,Model,Serial,B\\W,Color,Total Count,Remarks,Reading Date') 'e-automate CSV content'
+    Assert-True ($eaTxt -match 'TESTSN001' -and $eaTxt -match 'Equipment Number,Model,Serial,B\\W,Color,Total Count,Remarks,Reading Date' -and $eaTxt -match 'Imported by QuMeter') 'e-automate CSV content'
     $pt = Get-Content $prog -Raw
     Assert-True ($pt -match 'PROGRESS 1/1' -and $pt -match 'STEP ' -and $pt -match 'DONE 0') 'progress file has PROGRESS/STEP/DONE'
     Assert-True (-not (Test-Path (Join-Path $inst 'request.json'))) 'request.json consumed'

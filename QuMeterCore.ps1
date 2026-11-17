@@ -2,7 +2,7 @@
 # Windows PowerShell 5.1 compatible. No third-party modules.
 $script:QmCoreRoot = $PSScriptRoot
 if (-not $script:QmCoreRoot) { $script:QmCoreRoot = Split-Path -Parent $MyInvocation.MyCommand.Path }
-$script:QmVersion = '2.1.0'
+$script:QmVersion = '2.1.1'
 $script:QmEntropy = [System.Text.Encoding]::UTF8.GetBytes('QuMeter-apikey-v1')
 $script:QmEngineFiles = @('QuSnmp.cs','QuSnmp.ps1','QuMeterCore.ps1','QuMeterEngine.ps1')
 
@@ -31,6 +31,7 @@ function Get-QmDefaultConfig {
         mappingFile   = 'e-automate.mapping.json'
         eaFormat      = 'basic'
         eaSource      = 'SNMP'
+        eaRemarks     = 'Imported by QuMeter'
         retentionDays = 90
         schedule      = [ordered]@{
             taskName   = 'QuMeter Auto'

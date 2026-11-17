@@ -81,7 +81,7 @@ $grid = Add-C $left (New-Object Windows.Forms.DataGridView -Property @{
     MultiSelect = $true; RowHeadersVisible = $false; BackgroundColor = 'White'
     AllowUserToResizeColumns = $true; AllowUserToOrderColumns = $true
 })
-$top = Add-C $left (New-Object Windows.Forms.Panel -Property @{ Dock = 'Top'; Height = 256 })
+$top = Add-C $left (New-Object Windows.Forms.Panel -Property @{ Dock = 'Top'; Height = 284 })
 $bottom = Add-C $left (New-Object Windows.Forms.Panel -Property @{ Dock = 'Bottom'; Height = 78 })
 $M = $top
 
@@ -104,12 +104,19 @@ $scan = New-B $M 'Scan' 540 94 130 32
 $scan.Font = $fontBold
 $scanBar = Add-C $M (New-Object Windows.Forms.ProgressBar -Property @{ Location = '540,132'; Size = '130,18' })
 
-$excludeTo = Add-C $M (New-Object Windows.Forms.CheckBox -Property @{ Text = 'Exclude IPs that timed out from the list and from exports'; Location = '10,156'; AutoSize = $true })
+$initialRemarks = 'Imported by QuMeter'
+if ($script:cfg -and $null -ne $script:cfg.eaRemarks) { $initialRemarks = [string]$script:cfg.eaRemarks }
+if ($saved -and ($saved.PSObject.Properties.Name -contains 'remarks')) { $initialRemarks = [string]$saved.remarks }
+New-L $M 'Remarks' 10 159 | Out-Null
+$remarks = New-T $M 70 156 460 $initialRemarks
+$remarks.Anchor = 'Top,Left,Right'
+
+$excludeTo = Add-C $M (New-Object Windows.Forms.CheckBox -Property @{ Text = 'Exclude IPs that timed out from the list and from exports'; Location = '10,184'; AutoSize = $true })
 if ($saved.PSObject.Properties.Name -contains 'excludeTimedOut' -and $saved.excludeTimedOut) { $excludeTo.Checked = $true }
 
-New-L $M 'Responding IPs (did not time out) - copy this list to rescan only those printers:' 10 178 | Out-Null
-$responded = Add-C $M (New-Object Windows.Forms.TextBox -Property @{ Location = '10,196'; Size = '520,54'; Multiline = $true; ReadOnly = $true; ScrollBars = 'Both'; WordWrap = $false; Font = $fontMono; BackColor = 'White' })
-$copyIps = New-B $M 'Copy' 540 196 130 28
+New-L $M 'Responding IPs (did not time out) - copy this list to rescan only those printers:' 10 206 | Out-Null
+$responded = Add-C $M (New-Object Windows.Forms.TextBox -Property @{ Location = '10,224'; Size = '520,54'; Multiline = $true; ReadOnly = $true; ScrollBars = 'Both'; WordWrap = $false; Font = $fontMono; BackColor = 'White' })
+$copyIps = New-B $M 'Copy' 540 224 130 28
 
 foreach ($col in @('IP','Model','Serial','Total','Mono','Color','Status','SysDescr','Error')) {
     [void]$grid.Columns.Add($col, $col)
@@ -166,6 +173,9 @@ After a scan, the box above the grid lists every address that did not time out, 
 Exclude IPs that timed out
 When checked, timed-out addresses disappear from the grid and from every export. Printers that answered with an error still appear.
 
+Remarks
+The Remarks box is written into the e-automate Remarks column (and the e-automate sheet in the Excel workbook). The default is Imported by QuMeter. Leave it empty for a blank remarks field. Commas and quotes are escaped in the CSV. Optional tokens, replaced per printer: {date} {time} {ip} {serial} {model}. The same remarks text is used by Automate / QuMeter Auto (including scheduled and deployed runs) after it is saved.
+
 Custom column names / Advanced format
 If your template or meter types use different names than B\W, Color and Total Count, click Edit mapping... (e-automate.mapping.json). Set "format": "advanced" for the Meter Import Advanced layout (one row per meter: Meter Type + Reading, with Source).
 
@@ -197,7 +207,20 @@ $load.Add_Click({
     if ($d.ShowDialog() -eq 'OK') { $targets.Text = [System.IO.File]::ReadAllText($d.FileName) }
 })
 function Persist {
-    Save-Settings @{ community = $community.Text; version = $ver.SelectedItem.ToString(); port = [int]$port.Value; timeoutMs = [int]$timeout.Value; retries = [int]$retries.Value; targets = $targets.Text; excludeTimedOut = [bool]$excludeTo.Checked }
+    Save-Settings @{ community = $community.Text; version = $ver.SelectedItem.ToString(); port = [int]$port.Value; timeoutMs = [int]$timeout.Value; retries = [int]$retries.Value; targets = $targets.Text; excludeTimedOut = [bool]$excludeTo.Checked; remarks = $remarks.Text }
+    if ($script:cfg) { $script:cfg.eaRemarks = $remarks.Text }
+    if (Test-Path -LiteralPath $configPath) {
+        try {
+            $cfgFile = Read-QmConfig -Path $configPath
+            $cfgFile.eaRemarks = $remarks.Text
+            Save-QmConfig -Config $cfgFile -Path $configPath
+        } catch { }
+    }
+}
+function Get-ExportMapping {
+    $map = Read-EaMapping -Path $mappingPath
+    $map.remarks = $remarks.Text
+    return $map
 }
 $script:readings = New-Object System.Collections.Generic.List[QuMeterSnmp.PrinterReading]
 function Get-CurrentReadings { Get-QuMeterVisibleReadings -Readings @($script:readings) -ExcludeTimedOut $excludeTo.Checked }
@@ -243,7 +266,7 @@ $exportXlsx.Add_Click({
     if (-not $list -or $list.Count -eq 0) { Msg 'No results to export.'; return }
     $path = Prompt-Save 'Export Excel workbook' 'Excel workbook (*.xlsx)|*.xlsx' ("QuMeter_{0}.xlsx" -f (Get-Date -Format 'yyyyMMdd_HHmmss'))
     if ($path) {
-        Export-QuMeterExcel -Readings $script:readings -Path $path -Mapping (Read-EaMapping -Path $mappingPath) -ExcludeTimedOut $excludeTo.Checked
+        Export-QuMeterExcel -Readings $script:readings -Path $path -Mapping (Get-ExportMapping) -ExcludeTimedOut $excludeTo.Checked
         $st.Text = "Saved $path"
     }
 })
@@ -254,7 +277,7 @@ $exportEa.Add_Click({
     if ($ok.Count -eq 0) { Msg 'No successful readings with a serial number. e-automate matching is by serial.'; return }
     $path = Prompt-Save 'Export e-automate meter import' 'e-automate workbook (*.xlsx)|*.xlsx|e-automate CSV (*.csv)|*.csv' ("QuMeter_eautomate_{0}.xlsx" -f (Get-Date -Format 'yyyyMMdd_HHmmss'))
     if (-not $path) { return }
-    $map = Read-EaMapping -Path $mappingPath
+    $map = Get-ExportMapping
     if ([IO.Path]::GetExtension($path) -ieq '.csv') {
         Export-QuMeterEaCsv -Readings $list -Path $path -Mapping $map
         $st.Text = "Saved $path (paste into EA_MeterImport.xlsx under row 8 if needed)"
@@ -288,7 +311,7 @@ $exportAll.Add_Click({
     $d = New-Object Windows.Forms.FolderBrowserDialog -Property @{ Description = 'Choose a folder for the Excel, e-automate, and MPS export files' }
     if ($d.ShowDialog() -ne 'OK') { return }
     $stamp = Get-Date -Format 'yyyyMMdd_HHmmss'
-    $map = Read-EaMapping -Path $mappingPath
+    $map = Get-ExportMapping
     Export-QuMeterGeneralCsv -Readings $list -Path (Join-Path $d.SelectedPath "QuMeter_$stamp.csv")
     Export-QuMeterExcel -Readings $script:readings -Path (Join-Path $d.SelectedPath "QuMeter_$stamp.xlsx") -Mapping $map -ExcludeTimedOut $excludeTo.Checked
     Export-QuMeterEaCsv -Readings $list -Path (Join-Path $d.SelectedPath "QuMeter_eautomate_$stamp.csv") -Mapping $map
@@ -371,6 +394,7 @@ $y += 30; New-L $S 'Log folder' 10 ($y + 3) | Out-Null; $aLogF = New-T $S 150 $y
 $y += 30; New-L $S 'Keep files (days, 0 = forever)' 10 ($y + 3) | Out-Null; $aRet = New-N $S 190 $y 70 0 3650 90
 $y += 30; New-L $S 'e-automate format' 10 ($y + 3) | Out-Null; $aFmt = New-Cb $S 150 $y 100 @('basic','advanced') 'basic'
 New-L $S 'Meter source (Lists and Codes)' 265 ($y + 3) | Out-Null; $aSrc = New-T $S 445 $y 120
+$y += 30; New-L $S 'Meter remarks' 10 ($y + 3) | Out-Null; $aRemarks = New-T $S 150 $y 605 $initialRemarks
 $y += 30; New-L $S 'Mapping file' 10 ($y + 3) | Out-Null; $aMap = New-T $S 150 $y 440; $bMap = New-B $S 'Browse...' 595 ($y - 1) 75 24; $bMapEdit = New-B $S 'Edit' 675 ($y - 1) 80 24
 $y += 40
 $keyGroup = Add-C $S (New-Object Windows.Forms.GroupBox -Property @{ Text = 'API key (authenticates QuMeter <-> deployed QuMeter Auto)'; Location = "10,$y"; Size = '745,95' })
@@ -455,6 +479,7 @@ Files older than "Keep files" days are deleted from the output and log folders (
 
 GETTING METERS INTO E-AUTOMATE
 Same as the Manual tab: open EA_MeterImport.xlsx, set Source (must exist in Lists and Codes), paste the e-automate CSV rows under the headers on row 8, and run the import. Matching is by Serial.
+Meter remarks come from the Meter remarks box on this Settings tab (default Imported by QuMeter). Leave it empty for a blank remarks field. Optional tokens, replaced per printer: {date} {time} {ip} {serial} {model}. Click Save settings so scheduled and deployed QuMeter Auto runs use the new text (it is stored in config.json and copied on Deploy).
 
 OUTPUT TO A NETWORK SHARE
 Output and MPS folders can be UNC paths like \\fileserver\meters so files land where you and e-automate can reach them.
@@ -482,13 +507,16 @@ Anything that goes wrong is shown in red at the top of the Deploy tab: can't rea
 New-Tips $pTip $autoTips 6 6 1020 470 'Top,Bottom,Left,Right' | Out-Null
 $pTip.Add_Resize({ $pTip.Controls[0].Size = "$($pTip.ClientSize.Width - 12),$($pTip.ClientSize.Height - 12)" })
 
+
+$remarks.Add_TextChanged({ if ($aRemarks.Text -ne $remarks.Text) { $aRemarks.Text = $remarks.Text } })
+$aRemarks.Add_TextChanged({ if ($remarks.Text -ne $aRemarks.Text) { $remarks.Text = $aRemarks.Text } })
 # ------------------------------------------------------------------ config <-> GUI
 function Set-GuiFromConfig($c) {
     $aTargets.Text = (@($c.targets) -join "`r`n")
     $aComm.Text = $c.community; $aVer.SelectedItem = "$($c.version)"
     $aPort.Value = [decimal]$c.port; $aTimeout.Value = [decimal][math]::Max(100, $c.timeoutMs); $aRetries.Value = [decimal]$c.retries; $aConc.Value = [decimal][math]::Min(64, [math]::Max(1, $c.concurrency))
     $aOut.Text = $c.outputFolder; $aMps.Text = $c.mpsDropFolder; $aLogF.Text = $c.logFolder; $aRet.Value = [decimal]$c.retentionDays
-    $aFmt.SelectedItem = "$($c.eaFormat)"; $aSrc.Text = $c.eaSource; $aMap.Text = $c.mappingFile
+    $aFmt.SelectedItem = "$($c.eaFormat)"; $aSrc.Text = $c.eaSource; $aRemarks.Text = [string]$c.eaRemarks; $remarks.Text = [string]$c.eaRemarks; $aMap.Text = $c.mappingFile
     $s = $c.schedule
     $sName.Text = $s.taskName; $sFreq.SelectedItem = "$($s.frequency)"
     try { $sTime.Value = [datetime]::Today.Add([TimeSpan]::Parse("$($s.time)")) } catch { }
@@ -510,7 +538,7 @@ function Get-ConfigFromGui {
     $c.community = $aComm.Text.Trim(); $c.version = "$($aVer.SelectedItem)"; $c.port = [int]$aPort.Value
     $c.timeoutMs = [int]$aTimeout.Value; $c.retries = [int]$aRetries.Value; $c.concurrency = [int]$aConc.Value
     $c.outputFolder = $aOut.Text.Trim(); $c.mpsDropFolder = $aMps.Text.Trim(); $c.logFolder = $(if ($aLogF.Text.Trim()) { $aLogF.Text.Trim() } else { 'logs' })
-    $c.retentionDays = [int]$aRet.Value; $c.eaFormat = "$($aFmt.SelectedItem)"; $c.eaSource = $aSrc.Text.Trim()
+    $c.retentionDays = [int]$aRet.Value; $c.eaFormat = "$($aFmt.SelectedItem)"; $c.eaSource = $aSrc.Text.Trim(); $c.eaRemarks = $aRemarks.Text
     $c.mappingFile = $(if ($aMap.Text.Trim()) { $aMap.Text.Trim() } else { 'e-automate.mapping.json' })
     $c.schedule.taskName = $sName.Text.Trim(); $c.schedule.frequency = "$($sFreq.SelectedItem)"; $c.schedule.time = $sTime.Value.ToString('HH:mm')
     $c.schedule.dayOfWeek = "$($sDow.SelectedItem)"; $c.schedule.dayOfMonth = "$($sDom.SelectedItem)"
@@ -539,6 +567,8 @@ function Save-All([switch]$Quiet) {
     $script:cfg = Read-QmConfig -Path $configPath
     $script:apiKey = $aKey.Text.Trim()
     try { Save-QmUserApiKey -Key $script:apiKey -Path $userKeyPath } catch { Msg "Could not save the API key: $($_.Exception.Message)" 'Warning' }
+    $remarks.Text = $aRemarks.Text
+    Persist
     $aValid.ForeColor = 'DarkGreen'; $aValid.Text = "Saved $(Get-Date -Format 'HH:mm:ss'). Schedule: $(Get-QmScheduleText $script:cfg.schedule)."
     return $script:cfg
 }
