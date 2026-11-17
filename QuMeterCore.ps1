@@ -2,7 +2,7 @@
 # Windows PowerShell 5.1 compatible. No third-party modules.
 $script:QmCoreRoot = $PSScriptRoot
 if (-not $script:QmCoreRoot) { $script:QmCoreRoot = Split-Path -Parent $MyInvocation.MyCommand.Path }
-$script:QmVersion = '2.0.0'
+$script:QmVersion = '2.1.0'
 $script:QmEntropy = [System.Text.Encoding]::UTF8.GetBytes('QuMeter-apikey-v1')
 $script:QmEngineFiles = @('QuSnmp.cs','QuSnmp.ps1','QuMeterCore.ps1','QuMeterEngine.ps1')
 

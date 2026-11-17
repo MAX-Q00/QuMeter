@@ -50,7 +50,9 @@ function New-Cb($p, $x, $y, $w, [string[]]$items, $sel) {
     Add-C $p $c
 }
 function New-Tips($p, $text, $x, $y, $w, $h, $anchor) {
-    $t = New-Object Windows.Forms.TextBox -Property @{ Location = "$x,$y"; Size = "$w,$h"; Multiline = $true; ReadOnly = $true; ScrollBars = 'Vertical'; BackColor = [Drawing.Color]::FromArgb(255, 252, 235); Text = $text; Anchor = $anchor }
+    # Windows TextBox needs CRLF line breaks; scripts may be saved with LF only.
+    $text = [string]$text -replace "`r`n", "`n" -replace "`n", "`r`n"
+    $t = New-Object Windows.Forms.TextBox -Property @{ Location = "$x,$y"; Size = "$w,$h"; Multiline = $true; ReadOnly = $true; ScrollBars = 'Both'; WordWrap = $true; BackColor = [Drawing.Color]::FromArgb(255, 252, 235); Text = $text; Anchor = $anchor }
     Add-C $p $t
 }
 function Msg($text, $icon = 'Information') { [void][Windows.Forms.MessageBox]::Show($text, 'QuMeter', 'OK', $icon) }
@@ -61,15 +63,28 @@ function Browse-Folder($box) {
 }
 function Test-IsAdmin { ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator) }
 
-$f = New-Object Windows.Forms.Form -Property @{ Text = "QuMeter $(Get-QmVersion)"; Size = '1080,780'; MinimumSize = '980,700'; StartPosition = 'CenterScreen'; Font = New-Object Drawing.Font('Segoe UI', 9) }
+$f = New-Object Windows.Forms.Form -Property @{ Text = "QuMeter $(Get-QmVersion)"; Size = '1100,820'; MinimumSize = '900,640'; StartPosition = 'CenterScreen'; Font = New-Object Drawing.Font('Segoe UI', 9) }
 $tabs = New-Object Windows.Forms.TabControl -Property @{ Dock = 'Fill' }
-$tabManual = New-Object Windows.Forms.TabPage -Property @{ Text = 'Manual'; Padding = '6,6,6,6' }
-$tabAuto   = New-Object Windows.Forms.TabPage -Property @{ Text = 'Automate'; Padding = '6,6,6,6' }
+$tabManual = New-Object Windows.Forms.TabPage -Property @{ Text = 'Manual'; Padding = '6,6,6,6'; AutoScroll = $true; AutoScrollMinSize = New-Object Drawing.Size(1040, 720) }
+$tabAuto   = New-Object Windows.Forms.TabPage -Property @{ Text = 'Automate'; Padding = '6,6,6,6'; AutoScroll = $true; AutoScrollMinSize = New-Object Drawing.Size(1040, 640) }
 [void]$tabs.TabPages.Add($tabManual); [void]$tabs.TabPages.Add($tabAuto)
 $f.Controls.Add($tabs)
 
 # ================================================================== MANUAL TAB
-$M = $tabManual
+$scrollHost = Add-C $tabManual (New-Object Windows.Forms.Panel -Property @{ Dock = 'Fill'; AutoScroll = $true; AutoScrollMinSize = New-Object Drawing.Size(1040, 720) })
+$Mhost = $scrollHost
+$left = Add-C $Mhost (New-Object Windows.Forms.Panel -Property @{ Dock = 'None' })
+$grid = Add-C $left (New-Object Windows.Forms.DataGridView -Property @{
+    Dock = 'Fill'
+    AllowUserToAddRows = $false; AllowUserToDeleteRows = $false; ReadOnly = $true
+    AutoSizeColumnsMode = 'None'; ScrollBars = 'Both'; SelectionMode = 'FullRowSelect'
+    MultiSelect = $true; RowHeadersVisible = $false; BackgroundColor = 'White'
+    AllowUserToResizeColumns = $true; AllowUserToOrderColumns = $true
+})
+$top = Add-C $left (New-Object Windows.Forms.Panel -Property @{ Dock = 'Top'; Height = 256 })
+$bottom = Add-C $left (New-Object Windows.Forms.Panel -Property @{ Dock = 'Bottom'; Height = 78 })
+$M = $top
+
 New-L $M 'Community' 10 13 | Out-Null
 $community = New-T $M 80 10 90 $(if ($saved.community) { $saved.community } else { 'public' })
 New-L $M 'Version' 180 13 | Out-Null
@@ -82,57 +97,99 @@ New-L $M 'Retries' 568 13 | Out-Null
 $retries = New-N $M 615 10 45 0 8 $(if ($null -ne $saved.retries) { $saved.retries } else { 1 })
 
 New-L $M 'Printer IPs, ranges, or CIDR (one per line or comma-separated), e.g. 10.0.0.10   10.0.1.1-50   10.0.1.0/24' 10 42 | Out-Null
-$targets = Add-C $M (New-Object Windows.Forms.TextBox -Property @{ Location = '10,62'; Size = '520,90'; Multiline = $true; ScrollBars = 'Vertical'; AcceptsReturn = $true; Font = $fontMono })
+$targets = Add-C $M (New-Object Windows.Forms.TextBox -Property @{ Location = '10,62'; Size = '520,90'; Multiline = $true; ScrollBars = 'Both'; WordWrap = $false; AcceptsReturn = $true; Font = $fontMono })
 if ($saved.targets) { $targets.Text = $saved.targets }
 $load = New-B $M 'Load list...' 540 62 130 28
 $scan = New-B $M 'Scan' 540 94 130 32
 $scan.Font = $fontBold
 $scanBar = Add-C $M (New-Object Windows.Forms.ProgressBar -Property @{ Location = '540,132'; Size = '130,18' })
 
-$grid = Add-C $M (New-Object Windows.Forms.DataGridView -Property @{
-    Location = '10,162'; Size = '660,500'; Anchor = 'Top,Bottom,Left,Right'
-    AllowUserToAddRows = $false; AllowUserToDeleteRows = $false; ReadOnly = $true
-    AutoSizeColumnsMode = 'Fill'; SelectionMode = 'FullRowSelect'; MultiSelect = $true; RowHeadersVisible = $false; BackgroundColor = 'White' })
-foreach ($col in @('IP','Model','Serial','Total','Mono','Color','Status','SysDescr','Error')) { [void]$grid.Columns.Add($col, $col) }
-$grid.Columns['SysDescr'].FillWeight = 140; $grid.Columns['Error'].FillWeight = 140
+$excludeTo = Add-C $M (New-Object Windows.Forms.CheckBox -Property @{ Text = 'Exclude IPs that timed out from the list and from exports'; Location = '10,156'; AutoSize = $true })
+if ($saved.PSObject.Properties.Name -contains 'excludeTimedOut' -and $saved.excludeTimedOut) { $excludeTo.Checked = $true }
 
-$exportCsv  = New-B $M 'Export CSV' 10 672 110 30
-$exportEa   = New-B $M 'Export e-automate CSV' 125 672 160 30
-$exportBoth = New-B $M 'Export both' 290 672 100 30
-$editMap    = New-B $M 'Edit mapping...' 395 672 110 30
-foreach ($b in @($exportCsv,$exportEa,$exportBoth,$editMap)) { $b.Anchor = 'Bottom,Left' }
-$st = New-L $M 'Paste printer IPs and click Scan.' 512 679
-$st.Anchor = 'Bottom,Left'
+New-L $M 'Responding IPs (did not time out) - copy this list to rescan only those printers:' 10 178 | Out-Null
+$responded = Add-C $M (New-Object Windows.Forms.TextBox -Property @{ Location = '10,196'; Size = '520,54'; Multiline = $true; ReadOnly = $true; ScrollBars = 'Both'; WordWrap = $false; Font = $fontMono; BackColor = 'White' })
+$copyIps = New-B $M 'Copy' 540 196 130 28
+
+foreach ($col in @('IP','Model','Serial','Total','Mono','Color','Status','SysDescr','Error')) {
+    [void]$grid.Columns.Add($col, $col)
+}
+$grid.Columns['IP'].Width = 110
+$grid.Columns['Model'].Width = 170
+$grid.Columns['Serial'].Width = 120
+$grid.Columns['Total'].Width = 80
+$grid.Columns['Mono'].Width = 80
+$grid.Columns['Color'].Width = 80
+$grid.Columns['Status'].Width = 80
+$grid.Columns['SysDescr'].Width = 220
+$grid.Columns['Error'].Width = 220
+
+$exportXlsx = New-B $bottom 'Export Excel' 10 6 110 30
+$exportEa   = New-B $bottom 'Export e-automate' 125 6 130 30
+$exportMps  = New-B $bottom 'Export MPS' 260 6 100 30
+$exportAll  = New-B $bottom 'Export all...' 365 6 110 30
+$exportCsv  = New-B $bottom 'Export CSV' 480 6 100 30
+$editMap    = New-B $bottom 'Edit mapping...' 585 6 110 30
+$st = New-L $bottom 'Paste printer IPs and click Scan.' 10 44
+$st.AutoSize = $true
 
 $manualTips = @"
 TIPS - USING THE MANUAL OUTPUT
 
-1) General CSV  (Export CSV)
-Your record of the scan: date, time, IP, model, serial, total, mono, color, status and any error for every address. Open it in Excel, keep it for meter history, or send it to a customer. Timeouts and errors are included so you can see which printers did not answer.
-
-2) e-automate CSV  (Export e-automate CSV)
-Only printers that answered AND reported a serial number are included, because e-automate matches the machine by Serial (Equipment Number is left blank; Model + Serial identify it).
+RECOMMENDED: e-automate workbook  (Export e-automate)
+Best path for updating meters on many serial numbers at once. Only printers that answered AND reported a serial are included. Matching is by Model + Serial (Equipment Number is left blank).
 Columns (ECI Meter Import): Equipment Number, Model, Serial, B\W, Color, Total Count, Remarks, Reading Date.
 
-How to import it:
- a. In e-automate's Import and Export Utility, get the official Meter Import template EA_MeterImport.xlsx. The importer only accepts that .xlsx template, not a CSV.
- b. In the template header, set Source to a meter source that already exists in Lists and Codes (not Contract, Service Call or Web, which are system sources).
- c. Open our CSV in Excel, copy the data rows (not our header), and paste them under the template's column headers on row 8, so data starts on row 9. Check the columns line up.
- d. Save the .xlsx and run the Meter Import.
- e-automate rejects a row if you send a meter type the equipment doesn't have, or leave out one it does have. Blank Mono/Color means the printer didn't report it; QuMeter never estimates. Delete or fill those cells to match how the equipment is set up.
+How to import it into e-automate:
+ a. The official Import and Export Utility accepts .xlsx only.
+ b. Try dropping the QuMeter e-automate .xlsx onto "Drop a file here" and click Import.
+ c. In the file, Source is on the Import sheet in row 3. It must already exist in Lists and Codes (not Contract, Service Call or Web). Change it in Edit mapping... if your list uses a name other than SNMP.
+ d. Column headers are on row 8; data starts on row 9.
+ e. If the utility rejects this generated workbook, download the official EA_MeterImport.xlsx template, set Source in the header, paste our data rows (not our header) under row 8, save, and import that official file.
+ e-automate rejects a row if you send a meter type the equipment doesn't have, or leave out one it does have. Blank Mono/Color means the printer didn't report it; QuMeter never estimates.
 
-3) Custom column names / Advanced format
+ALTERNATIVE: MPS file, then MPS to e-automate  (Export MPS)
+Use this if you already have an MPS tool (for example FMAudit / Printanista) reporting meters into e-automate.
+ - Default MPS CSV: SerialNumber, Model, IPAddress, TotalCount, MonoCount, ColorCount, ReadDate, ReadDateTime, SysDescr (same layout the Automate tab drops in a watch folder). Confirm your MPS tool accepts that layout, or map the columns.
+ - FMAudit-style CSV / Excel sheet: IP Address, Manufacturer, Model, Serial Number, Description, Total Pages, Mono Pages, Color Pages (published FMAudit audit-history names). Use this if your tool expects those headers.
+A single official "import this file into ECI MPS" template was not published in the public docs, so confirm the columns in your MPS tool before a live import.
+
+Excel workbook  (Export Excel)
+Opens in Excel with sheets for Results, e-automate, MPS, FMAudit, and import instructions. Timed-out IPs are omitted if that box is checked. This is the record/spreadsheet export, not a substitute for the official e-automate template if the utility requires it.
+
+General CSV  (Export CSV)
+Your record of the scan: date, time, IP, model, serial, total, mono, color, status and any error. Timeouts are included unless "Exclude IPs that timed out" is checked.
+
+Responding IP list
+After a scan, the box above the grid lists every address that did not time out, one per line, in the same format as the IP input. Click Copy and paste it back into the input to rescan only those printers.
+
+Exclude IPs that timed out
+When checked, timed-out addresses disappear from the grid and from every export. Printers that answered with an error still appear.
+
+Custom column names / Advanced format
 If your template or meter types use different names than B\W, Color and Total Count, click Edit mapping... (e-automate.mapping.json). Set "format": "advanced" for the Meter Import Advanced layout (one row per meter: Meter Type + Reading, with Source).
 
-4) MPS monitor watch folder
-The Automate tab can also drop a generic MPS CSV (SerialNumber, Model, IPAddress, TotalCount, MonoCount, ColorCount, ReadDate...) into a folder your MPS tool watches. Confirm your MPS tool accepts that layout first.
-
-5) Scan tips
+Scan tips
 - Community is usually "public". Use v1 if old printers time out on v2c.
 - Big ranges (/24) take a few seconds; non-printers just time out.
 - Run from a PC on the printer network: SNMP is UDP 161.
 "@
-$manualTipsBox = New-Tips $M $manualTips 680 10 370 692 'Top,Bottom,Right'
+$manualTipsBox = New-Tips $Mhost $manualTips 0 0 370 100 'None'
+$left.Dock = 'None'
+$manualTipsBox.Dock = 'None'
+function Layout-ManualTab {
+    $min = $scrollHost.AutoScrollMinSize
+    $w = [math]::Max($min.Width, $scrollHost.ClientSize.Width)
+    $h = [math]::Max($min.Height, $scrollHost.ClientSize.Height)
+    $tipsW = 370
+    $manualTipsBox.Location = New-Object Drawing.Point(($w - $tipsW), 0)
+    $manualTipsBox.Size = New-Object Drawing.Size($tipsW, $h)
+    $left.Location = New-Object Drawing.Point(0, 0)
+    $left.Size = New-Object Drawing.Size(($w - $tipsW), $h)
+}
+$tabManual.Add_Resize({ Layout-ManualTab })
+$scrollHost.Add_Resize({ Layout-ManualTab })
+Layout-ManualTab
 
 $script:scanJob = $null
 $load.Add_Click({
@@ -140,15 +197,40 @@ $load.Add_Click({
     if ($d.ShowDialog() -eq 'OK') { $targets.Text = [System.IO.File]::ReadAllText($d.FileName) }
 })
 function Persist {
-    Save-Settings @{ community = $community.Text; version = $ver.SelectedItem.ToString(); port = [int]$port.Value; timeoutMs = [int]$timeout.Value; retries = [int]$retries.Value; targets = $targets.Text }
+    Save-Settings @{ community = $community.Text; version = $ver.SelectedItem.ToString(); port = [int]$port.Value; timeoutMs = [int]$timeout.Value; retries = [int]$retries.Value; targets = $targets.Text; excludeTimedOut = [bool]$excludeTo.Checked }
 }
 $script:readings = New-Object System.Collections.Generic.List[QuMeterSnmp.PrinterReading]
-function Get-CurrentReadings { @($script:readings) }
+function Get-CurrentReadings { Get-QuMeterVisibleReadings -Readings @($script:readings) -ExcludeTimedOut $excludeTo.Checked }
 function Prompt-Save([string]$title, [string]$filter, [string]$defaultName) {
     $d = New-Object Windows.Forms.SaveFileDialog -Property @{ Title = $title; Filter = $filter; FileName = $defaultName }
     if ($d.ShowDialog() -eq 'OK') { return $d.FileName }
     return $null
 }
+function Show-ManualResults {
+    $grid.Rows.Clear()
+    $responded.Text = Get-QuMeterRespondedIpText -Readings @($script:readings)
+    $visible = Get-CurrentReadings
+    foreach ($r in $visible) {
+        $i = $grid.Rows.Add($r.Ip, $r.Model, $r.Serial, $r.Total, $r.Mono, $r.Color, $r.Status, $r.SysDescr, $r.ErrorMessage)
+        if ($r.Status -ne 'OK') { $grid.Rows[$i].DefaultCellStyle.ForeColor = [Drawing.Color]::Firebrick }
+    }
+    try { $grid.AutoResizeColumns([Windows.Forms.DataGridViewAutoSizeColumnsMode]::DisplayedCells) } catch { }
+    $ok = @($script:readings | Where-Object { $_.Status -eq 'OK' }).Count
+    $to = @($script:readings | Where-Object { $_.Status -eq 'Timeout' }).Count
+    $shown = @($visible).Count
+    $st.Text = "Done. $ok ok, $to timed out, $($script:readings.Count) total, $shown shown."
+}
+$excludeTo.Add_CheckedChanged({
+    if ($script:readings -and $script:readings.Count -gt 0) { Show-ManualResults }
+    Persist
+})
+$copyIps.Add_Click({
+    $text = $responded.Text
+    if ([string]::IsNullOrWhiteSpace($text)) { Msg 'No responding IPs yet. Run a scan first.'; return }
+    [Windows.Forms.Clipboard]::SetText($text)
+    $n = @($text -split '\r?\n' | Where-Object { $_.Trim() }).Count
+    $st.Text = "Copied $n responding IP(s)."
+})
 $editMap.Add_Click({ Start-Process notepad.exe -ArgumentList "`"$mappingPath`"" })
 $exportCsv.Add_Click({
     $list = Get-CurrentReadings
@@ -156,23 +238,64 @@ $exportCsv.Add_Click({
     $path = Prompt-Save 'Export general CSV' 'CSV (*.csv)|*.csv' ("QuMeter_{0}.csv" -f (Get-Date -Format 'yyyyMMdd_HHmmss'))
     if ($path) { Export-QuMeterGeneralCsv -Readings $list -Path $path; $st.Text = "Saved $path" }
 })
+$exportXlsx.Add_Click({
+    $list = Get-CurrentReadings
+    if (-not $list -or $list.Count -eq 0) { Msg 'No results to export.'; return }
+    $path = Prompt-Save 'Export Excel workbook' 'Excel workbook (*.xlsx)|*.xlsx' ("QuMeter_{0}.xlsx" -f (Get-Date -Format 'yyyyMMdd_HHmmss'))
+    if ($path) {
+        Export-QuMeterExcel -Readings $script:readings -Path $path -Mapping (Read-EaMapping -Path $mappingPath) -ExcludeTimedOut $excludeTo.Checked
+        $st.Text = "Saved $path"
+    }
+})
 $exportEa.Add_Click({
     $list = Get-CurrentReadings
     if (-not $list -or $list.Count -eq 0) { Msg 'No results to export.'; return }
     $ok = @($list | Where-Object { $_.Status -eq 'OK' -and $_.Serial })
     if ($ok.Count -eq 0) { Msg 'No successful readings with a serial number. e-automate matching is by serial.'; return }
-    $path = Prompt-Save 'Export e-automate meter import CSV' 'CSV (*.csv)|*.csv' ("QuMeter_eautomate_{0}.csv" -f (Get-Date -Format 'yyyyMMdd_HHmmss'))
-    if ($path) { Export-QuMeterEaCsv -Readings $list -Path $path -Mapping (Read-EaMapping -Path $mappingPath); $st.Text = "Saved $path (paste into EA_MeterImport.xlsx under row 8)" }
+    $path = Prompt-Save 'Export e-automate meter import' 'e-automate workbook (*.xlsx)|*.xlsx|e-automate CSV (*.csv)|*.csv' ("QuMeter_eautomate_{0}.xlsx" -f (Get-Date -Format 'yyyyMMdd_HHmmss'))
+    if (-not $path) { return }
+    $map = Read-EaMapping -Path $mappingPath
+    if ([IO.Path]::GetExtension($path) -ieq '.csv') {
+        Export-QuMeterEaCsv -Readings $list -Path $path -Mapping $map
+        $st.Text = "Saved $path (paste into EA_MeterImport.xlsx under row 8 if needed)"
+    } else {
+        Export-QuMeterEaXlsx -Readings $list -Path $path -Mapping $map
+        $st.Text = "Saved $path (recommended: import in e-automate, or paste into the official template if the utility rejects this file)"
+    }
 })
-$exportBoth.Add_Click({
+$exportMps.Add_Click({
     $list = Get-CurrentReadings
     if (-not $list -or $list.Count -eq 0) { Msg 'No results to export.'; return }
-    $d = New-Object Windows.Forms.FolderBrowserDialog -Property @{ Description = 'Choose a folder for both CSV files' }
+    $ok = @($list | Where-Object { $_.Status -eq 'OK' })
+    if ($ok.Count -eq 0) { Msg 'No successful readings to put in an MPS file.'; return }
+    $d = New-Object Windows.Forms.SaveFileDialog -Property @{
+        Title = 'Export MPS meter import'
+        Filter = 'MPS CSV (*.csv)|*.csv|FMAudit-style CSV (*.csv)|*.csv'
+        FileName = ("QuMeter_mps_{0}.csv" -f (Get-Date -Format 'yyyyMMdd_HHmmss'))
+    }
+    if ($d.ShowDialog() -ne 'OK') { return }
+    if ($d.FilterIndex -eq 2) {
+        Export-QuMeterMpsFmAuditCsv -Readings $list -Path $d.FileName
+        $st.Text = "Saved FMAudit-style MPS CSV $($d.FileName)"
+    } else {
+        Export-QuMeterMpsCsv -Readings $list -Path $d.FileName
+        $st.Text = "Saved MPS CSV $($d.FileName)"
+    }
+})
+$exportAll.Add_Click({
+    $list = Get-CurrentReadings
+    if (-not $list -or $list.Count -eq 0) { Msg 'No results to export.'; return }
+    $d = New-Object Windows.Forms.FolderBrowserDialog -Property @{ Description = 'Choose a folder for the Excel, e-automate, and MPS export files' }
     if ($d.ShowDialog() -ne 'OK') { return }
     $stamp = Get-Date -Format 'yyyyMMdd_HHmmss'
+    $map = Read-EaMapping -Path $mappingPath
     Export-QuMeterGeneralCsv -Readings $list -Path (Join-Path $d.SelectedPath "QuMeter_$stamp.csv")
-    Export-QuMeterEaCsv -Readings $list -Path (Join-Path $d.SelectedPath "QuMeter_eautomate_$stamp.csv") -Mapping (Read-EaMapping -Path $mappingPath)
-    $st.Text = "Saved both CSVs in $($d.SelectedPath)"
+    Export-QuMeterExcel -Readings $script:readings -Path (Join-Path $d.SelectedPath "QuMeter_$stamp.xlsx") -Mapping $map -ExcludeTimedOut $excludeTo.Checked
+    Export-QuMeterEaCsv -Readings $list -Path (Join-Path $d.SelectedPath "QuMeter_eautomate_$stamp.csv") -Mapping $map
+    Export-QuMeterEaXlsx -Readings $list -Path (Join-Path $d.SelectedPath "QuMeter_eautomate_$stamp.xlsx") -Mapping $map
+    Export-QuMeterMpsCsv -Readings $list -Path (Join-Path $d.SelectedPath "QuMeter_mps_$stamp.csv")
+    Export-QuMeterMpsFmAuditCsv -Readings $list -Path (Join-Path $d.SelectedPath "QuMeter_mps_fmaudit_$stamp.csv")
+    $st.Text = "Saved Excel, e-automate, and MPS files in $($d.SelectedPath). Recommended: import the e-automate .xlsx in e-automate (or paste into the official template)."
 })
 $scan.Add_Click({
     if ($script:scanJob) { return }
@@ -180,7 +303,7 @@ $scan.Add_Click({
     try { $hosts = [QuMeterSnmp.TargetParser]::Parse($targets.Text, 65536) } catch { Msg $_.Exception.Message 'Warning'; return }
     if ($hosts.Count -eq 0) { Msg 'Enter at least one IP, range, or CIDR.'; return }
     if ($hosts.Count -gt 256 -and -not (Ask "This expands to $($hosts.Count) addresses. Scan anyway?")) { return }
-    $grid.Rows.Clear(); $script:readings.Clear()
+    $grid.Rows.Clear(); $script:readings.Clear(); $responded.Text = ''
     $client = New-QuSnmpClient -Community $community.Text.Trim() -Port ([int]$port.Value) -TimeoutMs ([int]$timeout.Value) -Retries ([int]$retries.Value) -Version $ver.SelectedItem.ToString()
     $scanBar.Maximum = [math]::Max(1, $hosts.Count); $scanBar.Value = 0
     $scan.Enabled = $false
@@ -196,23 +319,17 @@ $script:scanTimer.Add_Tick({
     if (-not $j.IsCompleted) { $st.Text = "Scanning $($j.Done) / $($j.Total)..."; return }
     $script:scanTimer.Stop(); $script:scanJob = $null; $scan.Enabled = $true
     if ($j.Error) { $st.Text = "Scan failed: $($j.Error.Message)"; return }
-    foreach ($r in $j.Results) {
-        $script:readings.Add($r)
-        $i = $grid.Rows.Add($r.Ip, $r.Model, $r.Serial, $r.Total, $r.Mono, $r.Color, $r.Status, $r.SysDescr, $r.ErrorMessage)
-        if ($r.Status -ne 'OK') { $grid.Rows[$i].DefaultCellStyle.ForeColor = [Drawing.Color]::Firebrick }
-    }
-    $ok = @($j.Results | Where-Object { $_.Status -eq 'OK' }).Count
-    $to = @($j.Results | Where-Object { $_.Status -eq 'Timeout' }).Count
-    $st.Text = "Done. $ok ok, $to timed out, $($j.Results.Count) total."
+    foreach ($r in $j.Results) { [void]$script:readings.Add($r) }
+    Show-ManualResults
 })
 
 # ================================================================== AUTOMATE TAB
 $A = $tabAuto
 $sub = New-Object Windows.Forms.TabControl -Property @{ Dock = 'Fill' }
-$pSet = New-Object Windows.Forms.TabPage -Property @{ Text = 'Settings'; AutoScroll = $true }
-$pSch = New-Object Windows.Forms.TabPage -Property @{ Text = 'Schedule (this PC)'; AutoScroll = $true }
-$pDep = New-Object Windows.Forms.TabPage -Property @{ Text = 'Deploy to server'; AutoScroll = $true }
-$pTip = New-Object Windows.Forms.TabPage -Property @{ Text = 'Tips' }
+$pSet = New-Object Windows.Forms.TabPage -Property @{ Text = 'Settings'; AutoScroll = $true; AutoScrollMinSize = New-Object Drawing.Size(900, 700) }
+$pSch = New-Object Windows.Forms.TabPage -Property @{ Text = 'Schedule (this PC)'; AutoScroll = $true; AutoScrollMinSize = New-Object Drawing.Size(900, 560) }
+$pDep = New-Object Windows.Forms.TabPage -Property @{ Text = 'Deploy to server'; AutoScroll = $true; AutoScrollMinSize = New-Object Drawing.Size(900, 700) }
+$pTip = New-Object Windows.Forms.TabPage -Property @{ Text = 'Tips'; AutoScroll = $true; AutoScrollMinSize = New-Object Drawing.Size(900, 500) }
 foreach ($pg in @($pSet,$pSch,$pDep,$pTip)) { [void]$sub.TabPages.Add($pg) }
 $A.Controls.Add($sub)
 
@@ -231,12 +348,12 @@ $lnkOut = Add-C $top (New-Object Windows.Forms.LinkLabel -Property @{ Text = 'Op
 $lnkLog = Add-C $top (New-Object Windows.Forms.LinkLabel -Property @{ Text = 'Open last log'; Location = '820,32'; AutoSize = $true; Anchor = 'Top,Right' })
 $lnkSt  = Add-C $top (New-Object Windows.Forms.LinkLabel -Property @{ Text = 'Last run details'; Location = '930,12'; AutoSize = $true; Anchor = 'Top,Right' })
 $lnkMps = Add-C $top (New-Object Windows.Forms.LinkLabel -Property @{ Text = 'Open MPS folder'; Location = '930,32'; AutoSize = $true; Anchor = 'Top,Right' })
-$runLog = Add-C $top (New-Object Windows.Forms.TextBox -Property @{ Location = '205,58'; Size = '835,74'; Multiline = $true; ReadOnly = $true; ScrollBars = 'Vertical'; Font = $fontMono; Anchor = 'Top,Left,Right' })
+$runLog = Add-C $top (New-Object Windows.Forms.TextBox -Property @{ Location = '205,58'; Size = '835,74'; Multiline = $true; ReadOnly = $true; ScrollBars = 'Both'; Font = $fontMono; Anchor = 'Top,Left,Right' })
 
 # --- Settings sub-tab
 $S = $pSet
 New-L $S 'Printers to read (IPs, ranges, CIDR; one per line):' 10 10 | Out-Null
-$aTargets = Add-C $S (New-Object Windows.Forms.TextBox -Property @{ Location = '10,30'; Size = '400,170'; Multiline = $true; ScrollBars = 'Vertical'; AcceptsReturn = $true; Font = $fontMono })
+$aTargets = Add-C $S (New-Object Windows.Forms.TextBox -Property @{ Location = '10,30'; Size = '400,170'; Multiline = $true; ScrollBars = 'Both'; WordWrap = $false; AcceptsReturn = $true; Font = $fontMono })
 $aCopy = New-B $S 'Copy list from Manual tab' 10 205 180 26
 $aLoad = New-B $S 'Load list...' 195 205 100 26
 $x2 = 440

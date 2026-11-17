@@ -1,6 +1,6 @@
 # QuMeter
 
-Windows app that reads lifetime meters from networked printers over SNMP (v1/v2c) and writes a general CSV plus an e-automate meter-import CSV. PowerShell 5.1 + WinForms, nothing to install. Built for HP fleets, but it uses the standard Printer-MIB OIDs, so other brands usually return at least serial + total.
+Windows app that reads lifetime meters from networked printers over SNMP (v1/v2c) and writes Excel, CSV, e-automate meter-import, and MPS meter-import files. PowerShell 5.1 + WinForms, nothing to install. Built for HP fleets, but it uses the standard Printer-MIB OIDs, so other brands usually return at least serial + total.
 
 QuMeter now includes **QuMeter Auto** (the old [QuMeterAuto](https://github.com/MAX-Q00/QuMeterAuto) repo is archived).
 
@@ -8,12 +8,18 @@ Double-click `QuMeter.bat`. The window has two tabs.
 
 ## Manual tab
 
-Paste IPs, ranges (`10.0.1.1-10.0.1.50` or `10.0.1.1-50`) or CIDR (`10.0.1.0/24`), set the community (default `public`), click **Scan**. A progress bar shows the scan. Then use **Export CSV**, **Export e-automate CSV**, or **Export both**. The **Tips** panel on the right explains what to do with each file:
+Paste IPs, ranges (`10.0.1.1-10.0.1.50` or `10.0.1.1-50`) or CIDR (`10.0.1.0/24`), set the community (default `public`), click **Scan**. A progress bar shows the scan. Check **Exclude IPs that timed out** to hide timeouts in the grid and in every export. After a scan, the **Responding IPs** box lists every address that did not time out (one per line, the same format as the IP input); **Copy** puts that list on the clipboard so you can paste it back and rescan only those printers. The window, tabs, results grid, and text boxes have horizontal and vertical scroll bars.
 
-- **General CSV**: every address, with status and errors, for records and Excel.
-- **e-automate CSV**: only printers that answered and reported a serial. Open the official `EA_MeterImport.xlsx` (Meter Import), set the header **Source** to a meter source that exists in Lists and Codes (not Contract, Service Call or Web), paste the rows under the column headers on row 8, and run the import. Matching is by Serial.
+Then export:
+
+- **Export Excel**: a `.xlsx` workbook with Results, e-automate, MPS, FMAudit, and import-instruction sheets. No Excel install is required to write the file.
+- **Export e-automate** (recommended for updating many serials at once): a `.xlsx` workbook laid out like ECI's Meter Import utility (Guide + Import tabs, **Source** on row 3, column headers on row 8, data from row 9). Only printers that answered and reported a serial are included. Matching is by Model + Serial. You can also save a CSV from the same dialog if you want to paste into the official template. The official Import and Export Utility is `.xlsx` only; if it rejects the generated workbook, download official `EA_MeterImport.xlsx`, set **Source** to a meter source in Lists and Codes (not Contract, Service Call or Web), paste our data rows under row 8, and import that file.
+- **Export MPS**: a CSV for an MPS watch folder or manual import. The default layout is `SerialNumber, Model, IPAddress, TotalCount, MonoCount, ColorCount, ReadDate, ReadDateTime, SysDescr` (same as the Automate tab). Choose **FMAudit-style CSV** in the save dialog for published FMAudit audit-history headers (`IP Address, Manufacturer, Model, Serial Number, Description, Total Pages, Mono Pages, Color Pages`). Confirm your MPS tool accepts the columns, or map them, then let MPS sync to e-automate if that integration is already set up. A single official public "import this file into ECI MPS" template was not confirmed.
+- **Export all...** writes the Excel workbook, e-automate `.xlsx` and CSV, both MPS CSVs, and the general CSV into one folder.
+- **Export CSV**: the general scan record (date, time, IP, model, serial, meters, status, errors).
 - **Edit mapping...** opens `e-automate.mapping.json` for custom column or meter-type names, or `"format": "advanced"`.
-- **MPS CSV**: from the Automate tab, for an MPS watch folder.
+
+The **Tips** panel on the right explains which file to use and how.
 
 ## Automate tab
 
@@ -73,7 +79,7 @@ Credentials come from `Get-Credential`, are held in memory only (Forget login cl
 
 SNMP is implemented in `QuSnmp.cs` over UDP. There are no third-party DLLs and no net-snmp dependency.
 
-## e-automate CSV
+## e-automate and MPS exports
 
 Default layout is the official **Meter Import** (basic) columns, taken from ECI's webhelp:
 
@@ -85,9 +91,9 @@ Equipment Number is left blank; the machine is identified by **Model + Serial**,
 
 **Important:** the official ECI Import and Export Utility accepts the official `EA_MeterImport.xlsx` template (**.xlsx only**), with column headers on row 8 and data starting on row 9. There is also a header **Source** field on that template (not a column) that must be a meter source already defined in Lists and Codes. Do not use the system-controlled sources Contract, Service Call, or Web.
 
-QuMeter writes a CSV with the confirmed column names so you can paste it into that template. Column names, date format, remarks, and meter-type labels are configurable in `e-automate.mapping.json`. Set `"format": "advanced"` to use the official Meter Import Advanced columns (`Equipment Number, Model, Serial, Source, Reading Date, Meter Type, Reading, Credits, Remarks`).
+QuMeter writes a `.xlsx` workbook with that layout (and still writes a CSV you can paste into the official template). Column names, date format, remarks, and meter-type labels are configurable in `e-automate.mapping.json`. Set `"format": "advanced"` to use the official Meter Import Advanced columns (`Equipment Number, Model, Serial, Source, Reading Date, Meter Type, Reading, Credits, Remarks`).
 
-The exact official `.xlsx` template (rows 1–7 of header metadata, named ranges, etc.) is not reproduced here. If your shop's template uses different meter-type names than `B\W`, `Color`, and `Total Count`, edit the mapping file to match Lists and Codes.
+The exact official `.xlsx` template (rows 1-7 of header metadata, named ranges, hyperlinks, etc.) is not reproduced here, so the official utility may still require you to paste into `EA_MeterImport.xlsx` if it rejects the generated file. If your shop's template uses different meter-type names than `B\W`, `Color`, and `Total Count`, edit the mapping file to match Lists and Codes.
 
 e-automate will reject a row if the equipment is missing a meter type you supplied, or if you omit a meter type the equipment has. Unavailable SNMP values are left blank on purpose; you may need to drop blank columns or fill missing types before import.
 
@@ -95,7 +101,7 @@ This app never writes to the e-automate database and never calls an e-automate o
 
 ## Files
 
-- `QuMeter.ps1` GUI · `QuMeterEngine.ps1` headless run · `QuMeterCore.ps1` config/schedule/deploy/API key · `QuSnmp.cs`/`QuSnmp.ps1` SNMP + CSV
+- `QuMeter.ps1` GUI · `QuMeterEngine.ps1` headless run · `QuMeterCore.ps1` config/schedule/deploy/API key · `QuSnmp.cs`/`QuSnmp.ps1` SNMP + CSV/Excel exports
 - `config.json` Automate settings (no secrets) · `settings.json` Manual tab · `e-automate.mapping.json` column mapping
 - `deploy\` package installer templates · `tests\` box tests (`Test-QuSnmp.ps1`, `Test-QuMeterCore.ps1`, SNMP simulator)
 

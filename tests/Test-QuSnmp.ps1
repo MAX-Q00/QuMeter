@@ -1,4 +1,4 @@
-# Unit + end-to-end tests for QuSnmp. Run from anywhere:
+﻿# Unit + end-to-end tests for QuSnmp. Run from anywhere:
 #   pwsh -NoProfile -File /workspace/QuMeter/tests/Test-QuSnmp.ps1
 $ErrorActionPreference = 'Stop'
 $here = $PSScriptRoot
@@ -127,14 +127,100 @@ Export-QuMeterEaCsv -Readings @($blank) -Path $ea2 -Mapping $map
 $ea2lines = @(Get-Content $ea2 | Select-Object -Skip 1 | Where-Object { $_.Trim() })
 Assert-Eq $ea2lines.Count 0 'e-automate export skips rows with no serial'
 
+
+Write-Host '=== Timeout filter, responding IP list, Excel and import exports ==='
+function Get-TestXlsxXml([string]$Path, [string]$Entry) {
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $zip = [System.IO.Compression.ZipFile]::OpenRead($Path)
+    try {
+        $e = $zip.GetEntry($Entry)
+        Assert-True ($null -ne $e) "xlsx has $Entry"
+        if (-not $e) { return '' }
+        $sr = New-Object System.IO.StreamReader($e.Open(), [System.Text.Encoding]::UTF8)
+        try { return $sr.ReadToEnd() } finally { $sr.Dispose() }
+    } finally { $zip.Dispose() }
+}
+$ok = New-Object QuMeterSnmp.PrinterReading
+$ok.Ip='10.0.0.9'; $ok.Model='HP Color LaserJet E57540'; $ok.Serial='TESTSN001'
+$ok.Total='123456'; $ok.Mono='100000'; $ok.Color='23456'; $ok.SysDescr='HP Color LaserJet E57540'
+$ok.Status='OK'; $ok.ReadAt = [datetime]::Parse('2026-11-14 08:30:00')
+$to = New-Object QuMeterSnmp.PrinterReading
+$to.Ip='10.0.0.10'; $to.Status='Timeout'; $to.ErrorMessage='timed out'; $to.ReadAt = [datetime]::Parse('2026-11-14 08:30:00')
+$err = New-Object QuMeterSnmp.PrinterReading
+$err.Ip='10.0.0.11'; $err.Status='Error'; $err.ErrorMessage='SNMP error'; $err.ReadAt = [datetime]::Parse('2026-11-14 08:30:00')
+$lead = New-Object QuMeterSnmp.PrinterReading
+$lead.Ip='10.0.0.12'; $lead.Model='Xerox Demo'; $lead.Serial='0012345'
+$lead.Total='50'; $lead.Mono='50'; $lead.Color=''; $lead.SysDescr='Xerox WorkCentre'
+$lead.Status='OK'; $lead.ReadAt = [datetime]::Parse('2026-11-14 08:30:00')
+$mix = @($ok, $to, $err, $lead)
+$all = Get-QuMeterVisibleReadings -Readings $mix -ExcludeTimedOut $false
+$filt = Get-QuMeterVisibleReadings -Readings $mix -ExcludeTimedOut $true
+Assert-Eq $all.Count 4 'unfiltered list keeps timed-out IPs'
+Assert-Eq $filt.Count 3 'exclude timed out drops only Timeout rows'
+Assert-True (@($filt | Where-Object { $_.Status -eq 'Timeout' }).Count -eq 0) 'filtered list has no Timeout status'
+Assert-True (@($filt | Where-Object { $_.Ip -eq '10.0.0.11' }).Count -eq 1) 'error responses stay in the filtered list'
+$ipText = Get-QuMeterRespondedIpText -Readings $mix
+Assert-True ($ipText -match '10\.0\.0\.9') 'responding list includes OK IP'
+Assert-True ($ipText -match '10\.0\.0\.11') 'responding list includes Error IP (did not time out)'
+Assert-True ($ipText -notmatch '10\.0\.0\.10') 'responding list omits timed-out IP'
+Assert-True ($ipText -match "`r`n" -or $ipText -match "`n") 'responding list is one IP per line'
+Assert-Eq (Get-QuMeterManufacturer $ok) 'HP' 'manufacturer from HP sysDescr'
+Assert-Eq (Get-QuMeterManufacturer $lead) 'Xerox' 'manufacturer from Xerox sysDescr'
+
+$xlsx = Join-Path $tmp 'meters.xlsx'
+$eaX  = Join-Path $tmp 'ea.xlsx'
+$fma  = Join-Path $tmp 'fmaudit.csv'
+$genF = Join-Path $tmp 'general-filtered.csv'
+Export-QuMeterExcel -Readings $mix -Path $xlsx -Mapping $map -ExcludeTimedOut $true
+Export-QuMeterEaXlsx -Readings $filt -Path $eaX -Mapping $map
+Export-QuMeterMpsFmAuditCsv -Readings $filt -Path $fma
+Export-QuMeterGeneralCsv -Readings $filt -Path $genF
+$wb = Get-TestXlsxXml $xlsx 'xl/workbook.xml'
+Assert-True ($wb -match 'name="Results"') 'excel workbook has Results sheet'
+Assert-True ($wb -match 'name="e-automate"') 'excel workbook has e-automate sheet'
+Assert-True ($wb -match 'name="MPS"') 'excel workbook has MPS sheet'
+Assert-True ($wb -match 'name="FMAudit"') 'excel workbook has FMAudit sheet'
+$resultsXml = Get-TestXlsxXml $xlsx 'xl/worksheets/sheet1.xml'
+Assert-True ($resultsXml -match 'TESTSN001') 'excel Results includes OK serial'
+Assert-True ($resultsXml -match '0012345') 'excel Results preserves leading-zero serial as text'
+Assert-True ($resultsXml -notmatch '10.0.0.10') 'excel Results omits timed-out IP when excluded'
+Assert-True ($resultsXml -match '10.0.0.11') 'excel Results keeps Error IP when excluded timeouts only'
+Assert-True ($resultsXml -match '<v>123456</v>') 'excel writes meter totals as numbers'
+$fmaTxt = Get-Content -LiteralPath $fma -Raw
+Assert-True ($fmaTxt -match 'IP Address,Manufacturer,Model,Serial Number,Description,Total Pages,Mono Pages,Color Pages') 'FMAudit-style header uses published audit field names'
+Assert-True ($fmaTxt -match 'TESTSN001') 'FMAudit-style includes serial'
+Assert-True ($fmaTxt -match 'HP') 'FMAudit-style includes manufacturer'
+Assert-True ($fmaTxt -notmatch '10.0.0.10') 'FMAudit-style skips non-OK rows'
+$genFtxt = Get-Content -LiteralPath $genF -Raw
+Assert-True ($genFtxt -notmatch '10.0.0.10') 'filtered general CSV omits timed-out IP'
+$eaWb = Get-TestXlsxXml $eaX 'xl/workbook.xml'
+Assert-True ($eaWb -match 'name="Guide"') 'e-automate xlsx has Guide sheet'
+Assert-True ($eaWb -match 'name="Import"') 'e-automate xlsx has Import sheet'
+$importXml = Get-TestXlsxXml $eaX 'xl/worksheets/sheet2.xml'
+Assert-True ($importXml -match '<row r="3">') 'e-automate Import has row 3 (Source)'
+Assert-True ($importXml -match 'SNMP') 'e-automate Import includes Source SNMP'
+Assert-True ($importXml -match '<row r="8">') 'e-automate Import has header row 8'
+Assert-True ($importXml -match 'Equipment Number') 'e-automate Import row 8 includes Equipment Number'
+Assert-True ($importXml -match 'B\\W' -or $importXml -match 'B\\\\W' -or $importXml -match '>B\\W<') 'e-automate Import includes B\W column'
+Assert-True ($importXml -match '<row r="9">') 'e-automate Import data starts on row 9'
+Assert-True ($importXml -match 'TESTSN001') 'e-automate Import includes serial on a data row'
+Assert-True ($importXml -notmatch '10.0.0.10') 'e-automate Import omits timed-out devices'
+
 Write-Host '=== End-to-end GET/GETNEXT against local simulator ==='
+
 $port1 = 11611
 $port2 = 11612
 $ready1 = Join-Path $tmp 'ready1.txt'
 $ready2 = Join-Path $tmp 'ready2.txt'
 $py = Join-Path $here 'snmp_sim.py'
-$p1 = Start-Process -FilePath 'python3' -ArgumentList @($py,'--host','127.0.0.1','--port',"$port1",'--profile','default','--ready-file',$ready1) -PassThru -RedirectStandardError (Join-Path $tmp 'sim1.err')
-$p2 = Start-Process -FilePath 'python3' -ArgumentList @($py,'--host','127.0.0.1','--port',"$port2",'--profile','fallback','--ready-file',$ready2) -PassThru -RedirectStandardError (Join-Path $tmp 'sim2.err')
+$python = $null
+foreach ($name in @('python','py','python3')) {
+    $cmd = Get-Command $name -ErrorAction SilentlyContinue
+    if ($cmd -and $cmd.Source -and ($cmd.Source -notmatch 'WindowsApps')) { $python = $cmd.Source; break }
+}
+if (-not $python) { throw 'Python not found (need a real python on PATH, not the Windows Store stub)' }
+$p1 = Start-Process -FilePath $python -ArgumentList @($py,'--host','127.0.0.1','--port',"$port1",'--profile','default','--ready-file',$ready1) -PassThru -RedirectStandardError (Join-Path $tmp 'sim1.err')
+$p2 = Start-Process -FilePath $python -ArgumentList @($py,'--host','127.0.0.1','--port',"$port2",'--profile','fallback','--ready-file',$ready2) -PassThru -RedirectStandardError (Join-Path $tmp 'sim2.err')
 try {
     $deadline = (Get-Date).AddSeconds(8)
     while ((-not (Test-Path $ready1) -or -not (Test-Path $ready2)) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 50 }
@@ -190,3 +276,4 @@ finally {
 Write-Host ''
 Write-Host "Results: $($script:passed) passed, $($script:failed) failed"
 if ($script:failed -gt 0) { exit 1 }
+

@@ -12,6 +12,23 @@ $tmp = Join-Path $here 'tmp-out/core'
 if (Test-Path $tmp) { Remove-Item $tmp -Recurse -Force }
 New-Item -ItemType Directory -Path $tmp -Force | Out-Null
 
+
+function Get-TestPython {
+    foreach ($name in @('python','py','python3')) {
+        $cmd = Get-Command $name -ErrorAction SilentlyContinue
+        if ($cmd -and $cmd.Source -and ($cmd.Source -notmatch 'WindowsApps')) { return $cmd.Source }
+    }
+    throw 'Python not found (need a real python on PATH, not the Windows Store stub)'
+}
+function Get-TestPowerShell {
+    $sys = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    if (Test-Path -LiteralPath $sys) { return $sys }
+    $pwsh = Get-Command pwsh -ErrorAction SilentlyContinue
+    if ($pwsh -and $pwsh.Source -and ($pwsh.Source -notmatch 'WindowsApps')) { return $pwsh.Source }
+    throw 'Windows PowerShell not found'
+}
+$script:TestPython = Get-TestPython
+$script:TestPwsh = Get-TestPowerShell
 Write-Host '=== Config round-trip ==='
 $c = Get-QmDefaultConfig
 $c.targets = @('10.0.0.10','10.0.1.0/24')
@@ -156,7 +173,7 @@ foreach ($f in @('QuMeterCore.ps1','QuMeterEngine.ps1','QuMeter.ps1','deploy/Ins
 Write-Host '=== Engine end-to-end (simulator) ==='
 $port = 11621
 $ready = Join-Path $tmp 'ready.txt'
-$sim = Start-Process -FilePath 'python3' -ArgumentList @((Join-Path $here 'snmp_sim.py'),'--host','127.0.0.1','--port',"$port",'--profile','default','--ready-file',$ready) -PassThru -RedirectStandardError (Join-Path $tmp 'sim.err')
+$sim = Start-Process -FilePath $script:TestPython -ArgumentList @((Join-Path $here 'snmp_sim.py'),'--host','127.0.0.1','--port',"$port",'--profile','default','--ready-file',$ready) -PassThru -RedirectStandardError (Join-Path $tmp 'sim.err')
 try {
     $deadline = (Get-Date).AddSeconds(8); while (-not (Test-Path $ready) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 50 }
     $inst = Join-Path $tmp 'inst'; New-Item -ItemType Directory $inst -Force | Out-Null
@@ -171,7 +188,7 @@ try {
     $rq2 = New-QmRunRequest -Key $k -Target 'local'
     [System.IO.File]::WriteAllText((Join-Path $inst 'request.json'), $rq2.Json)
     $prog = Join-Path $tmp 'progress.txt'
-    & pwsh -NoProfile -File (Join-Path $inst 'QuMeterEngine.ps1') -ConfigPath (Join-Path $inst 'config.json') -ProgressFile $prog -Trigger manual | Out-Null
+    & $script:TestPwsh -NoProfile -File (Join-Path $inst 'QuMeterEngine.ps1') -ConfigPath (Join-Path $inst 'config.json') -ProgressFile $prog -Trigger manual | Out-Null
     Assert-Eq $LASTEXITCODE 0 'engine exit code 0'
     $outs = @(Get-ChildItem (Join-Path $inst 'output') -Filter 'QuMeter_*.csv' | ForEach-Object Name)
     Assert-True (@($outs | Where-Object { $_ -match '^QuMeter_\d{8}_\d{6}\.csv$' }).Count -eq 1) 'dated general CSV written'
@@ -198,16 +215,19 @@ try {
     # Wrong-key request is rejected and reported
     $bad = New-QmRunRequest -Key 'not-the-key' -Target 'local'
     [System.IO.File]::WriteAllText((Join-Path $inst 'request.json'), $bad.Json)
-    & pwsh -NoProfile -File (Join-Path $inst 'QuMeterEngine.ps1') -ConfigPath (Join-Path $inst 'config.json') | Out-Null
+    & $script:TestPwsh -NoProfile -File (Join-Path $inst 'QuMeterEngine.ps1') -ConfigPath (Join-Path $inst 'config.json') | Out-Null
     Assert-Eq $LASTEXITCODE 3 'wrong-key request -> exit 3'
     $se2 = Read-QmSignedEnvelope -Json (Get-Content (Join-Path $inst 'logs/status.json') -Raw) -Key $k
     Assert-True ($se2.Data.run.errorStage -eq 'auth' -and $se2.Data.run.requestId -eq $bad.RequestId -and $se2.Data.run.error -match 'mismatch') 'rejection reported in status with request id'
 
     # Unreachable printer + unwritable output -> errors in status
+    # Use a file path as the output folder so writes fail on Windows and Linux (/proc is Linux-only).
+    $badOut = Join-Path $tmp 'not-a-directory'
+    'block' | Set-Content -LiteralPath $badOut
     $ec2 = Read-QmConfig (Join-Path $inst 'config.json'); $ec2.targets = @('127.0.0.1'); $ec2.port = 1; $ec2.timeoutMs = 200
-    $ec2.outputFolder = '/proc/qumeter-nope'; $ec2.mpsDropFolder = ''
+    $ec2.outputFolder = $badOut; $ec2.mpsDropFolder = ''
     Save-QmConfig $ec2 (Join-Path $inst 'config.json')
-    & pwsh -NoProfile -File (Join-Path $inst 'QuMeterEngine.ps1') -ConfigPath (Join-Path $inst 'config.json') | Out-Null
+    & $script:TestPwsh -NoProfile -File (Join-Path $inst 'QuMeterEngine.ps1') -ConfigPath (Join-Path $inst 'config.json') | Out-Null
     Assert-Eq $LASTEXITCODE 1 'nothing writable -> exit 1'
     $se3 = Read-QmSignedEnvelope -Json (Get-Content (Join-Path $inst 'logs/status.json') -Raw) -Key $k
     Assert-Eq $se3.Data.devices[0].status 'Timeout' 'per-device timeout in status'
@@ -218,7 +238,7 @@ try {
 
     # Config error
     '{ "targets": [], "version": "v9" }' | Set-Content (Join-Path $inst 'config.json')
-    & pwsh -NoProfile -File (Join-Path $inst 'QuMeterEngine.ps1') -ConfigPath (Join-Path $inst 'config.json') | Out-Null
+    & $script:TestPwsh -NoProfile -File (Join-Path $inst 'QuMeterEngine.ps1') -ConfigPath (Join-Path $inst 'config.json') | Out-Null
     Assert-Eq $LASTEXITCODE 1 'config error -> exit 1'
     $se4 = Read-QmSignedEnvelope -Json (Get-Content (Join-Path $inst 'logs/status.json') -Raw) -Key $k
     Assert-True ($se4.Data.run.errorStage -eq 'config' -and $se4.Data.run.error -match 'No printers') 'config error in status'
