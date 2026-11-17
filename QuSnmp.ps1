@@ -308,22 +308,36 @@ function Invoke-QuMeterScan {
 
 # --- Manual export helpers (Excel / e-automate xlsx / MPS / IP list) ---
 
+function Test-QuMeterHasSerial {
+    param($Reading)
+    if ($null -eq $Reading) { return $false }
+    $s = ([string]$Reading.Serial).Trim()
+    if ([string]::IsNullOrWhiteSpace($s)) { return $false }
+    $key = $s.ToLowerInvariant()
+    if ($key -eq 'n/a' -or $key -eq 'na' -or $key -eq 'unknown' -or $key -eq '0') { return $false }
+    return $true
+}
+
 function Get-QuMeterVisibleReadings {
-    param($Readings, [bool]$ExcludeTimedOut)
+    param($Readings, [bool]$ExcludeTimedOut, [bool]$ExcludeNoSerial)
     $list = @($Readings)
     if ($ExcludeTimedOut) {
         $list = @($list | Where-Object { $_.Status -ne 'Timeout' })
+    }
+    if ($ExcludeNoSerial) {
+        $list = @($list | Where-Object { Test-QuMeterHasSerial $_ })
     }
     return ,$list
 }
 
 function Get-QuMeterRespondedIpText {
-    param($Readings)
+    param($Readings, [bool]$ExcludeNoSerial)
     $ips = New-Object System.Collections.Generic.List[string]
     $seen = @{}
     foreach ($r in @($Readings)) {
         if ($null -eq $r) { continue }
         if ("$($r.Status)" -eq 'Timeout') { continue }
+        if ($ExcludeNoSerial -and -not (Test-QuMeterHasSerial $r)) { continue }
         $ip = [string]$r.Ip
         if ([string]::IsNullOrWhiteSpace($ip)) { continue }
         if ($seen.ContainsKey($ip)) { continue }
@@ -643,9 +657,9 @@ function Export-QuMeterEaXlsx {
 }
 
 function Export-QuMeterExcel {
-    param($Readings, [string]$Path, $Mapping, [bool]$ExcludeTimedOut)
+    param($Readings, [string]$Path, $Mapping, [bool]$ExcludeTimedOut, [bool]$ExcludeNoSerial)
     if (-not $Mapping) { $Mapping = Get-DefaultEaMapping }
-    $visible = Get-QuMeterVisibleReadings -Readings $Readings -ExcludeTimedOut $ExcludeTimedOut
+    $visible = Get-QuMeterVisibleReadings -Readings $Readings -ExcludeTimedOut $ExcludeTimedOut -ExcludeNoSerial $ExcludeNoSerial
     $genHeaders = @('Date','Time','IP','Model','Serial','Total','Mono','Color','SysDescr','Status','Error','SerialSource','ModelSource','TotalSource')
     $genRows = Convert-QuMeterRowsToXlsx -RowHashes (Convert-ReadingsToGeneralRows $visible) -Headers $genHeaders
     $eaRows = New-QuMeterEaImportSheetRows $visible $Mapping
@@ -672,7 +686,7 @@ function Export-QuMeterExcel {
     $fmaRows = Convert-QuMeterRowsToXlsx -RowHashes (Convert-ReadingsToMpsFmAuditRows $visible) -Headers $fmaHeaders
     $how = New-Object System.Collections.Generic.List[object]
     Add-QuXlsxRow $how @('How to use these sheets')
-    Add-QuXlsxRow $how @('Results', 'Full scan record (opens in Excel). If "Exclude IPs that timed out" was checked, timed-out addresses are omitted.')
+    Add-QuXlsxRow $how @('Results', 'Full scan record (opens in Excel). Timed-out addresses are omitted if that box is checked. IPs with no serial number (blank, N/A, unknown, or 0) are omitted if that box is checked.')
     Add-QuXlsxRow $how @('e-automate', 'Recommended import path: use the separate e-automate .xlsx (or this sheet) with the ECI Import and Export Utility. Official utility is .xlsx only. Column headers are on row 8; data starts on row 9. Set Source (row 3) to a meter source that already exists in Lists and Codes (not Contract, Service Call, or Web). If the utility rejects this generated workbook, download the official EA_MeterImport.xlsx template, set Source, and paste the data rows under row 8.')
     Add-QuXlsxRow $how @('MPS', 'Generic watch-folder CSV layout used by QuMeter Automate: SerialNumber, Model, IPAddress, TotalCount, MonoCount, ColorCount, ReadDate, ReadDateTime, SysDescr. Confirm your MPS tool accepts this layout, or map the columns, then let MPS sync to e-automate if that integration is already set up.')
     Add-QuXlsxRow $how @('FMAudit', 'Same meter fields with FMAudit audit-history column names (IP Address, Manufacturer, Model, Serial Number, Description, Total Pages, Mono Pages, Color Pages). Use this if your MPS tool expects FMAudit-style headers. A public, official "import this file into ECI MPS" template was not confirmed; map columns if your tool differs.')

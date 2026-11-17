@@ -81,7 +81,7 @@ $grid = Add-C $left (New-Object Windows.Forms.DataGridView -Property @{
     MultiSelect = $true; RowHeadersVisible = $false; BackgroundColor = 'White'
     AllowUserToResizeColumns = $true; AllowUserToOrderColumns = $true
 })
-$top = Add-C $left (New-Object Windows.Forms.Panel -Property @{ Dock = 'Top'; Height = 284 })
+$top = Add-C $left (New-Object Windows.Forms.Panel -Property @{ Dock = 'Top'; Height = 312 })
 $bottom = Add-C $left (New-Object Windows.Forms.Panel -Property @{ Dock = 'Bottom'; Height = 78 })
 $M = $top
 
@@ -114,9 +114,13 @@ $remarks.Anchor = 'Top,Left,Right'
 $excludeTo = Add-C $M (New-Object Windows.Forms.CheckBox -Property @{ Text = 'Exclude IPs that timed out from the list and from exports'; Location = '10,184'; AutoSize = $true })
 if ($saved.PSObject.Properties.Name -contains 'excludeTimedOut' -and $saved.excludeTimedOut) { $excludeTo.Checked = $true }
 
-New-L $M 'Responding IPs (did not time out) - copy this list to rescan only those printers:' 10 206 | Out-Null
-$responded = Add-C $M (New-Object Windows.Forms.TextBox -Property @{ Location = '10,224'; Size = '520,54'; Multiline = $true; ReadOnly = $true; ScrollBars = 'Both'; WordWrap = $false; Font = $fontMono; BackColor = 'White' })
-$copyIps = New-B $M 'Copy' 540 224 130 28
+$excludeNoSerial = Add-C $M (New-Object Windows.Forms.CheckBox -Property @{ Text = 'Exclude IPs that have no serial number from the list and from exports'; Location = '10,206'; AutoSize = $true })
+if ($script:cfg -and $script:cfg.excludeNoSerial) { $excludeNoSerial.Checked = $true }
+if ($saved -and ($saved.PSObject.Properties.Name -contains 'excludeNoSerial') -and $saved.excludeNoSerial) { $excludeNoSerial.Checked = $true }
+
+New-L $M 'Responding IPs (did not time out) - copy this list to rescan only those printers:' 10 228 | Out-Null
+$responded = Add-C $M (New-Object Windows.Forms.TextBox -Property @{ Location = '10,246'; Size = '520,54'; Multiline = $true; ReadOnly = $true; ScrollBars = 'Both'; WordWrap = $false; Font = $fontMono; BackColor = 'White' })
+$copyIps = New-B $M 'Copy' 540 246 130 28
 
 foreach ($col in @('IP','Model','Serial','Total','Mono','Color','Status','SysDescr','Error')) {
     [void]$grid.Columns.Add($col, $col)
@@ -162,16 +166,19 @@ Use this if you already have an MPS tool (for example FMAudit / Printanista) rep
 A single official "import this file into ECI MPS" template was not published in the public docs, so confirm the columns in your MPS tool before a live import.
 
 Excel workbook  (Export Excel)
-Opens in Excel with sheets for Results, e-automate, MPS, FMAudit, and import instructions. Timed-out IPs are omitted if that box is checked. This is the record/spreadsheet export, not a substitute for the official e-automate template if the utility requires it.
+Opens in Excel with sheets for Results, e-automate, MPS, FMAudit, and import instructions. Timed-out IPs and IPs with no serial number are omitted if those boxes are checked. This is the record/spreadsheet export, not a substitute for the official e-automate template if the utility requires it.
 
 General CSV  (Export CSV)
-Your record of the scan: date, time, IP, model, serial, total, mono, color, status and any error. Timeouts are included unless "Exclude IPs that timed out" is checked.
+Your record of the scan: date, time, IP, model, serial, total, mono, color, status and any error. Timeouts and IPs with no serial are included unless those boxes are checked.
 
 Responding IP list
-After a scan, the box above the grid lists every address that did not time out, one per line, in the same format as the IP input. Click Copy and paste it back into the input to rescan only those printers.
+After a scan, the box above the grid lists every address that did not time out, one per line, in the same format as the IP input. If "Exclude IPs that have no serial number" is checked, addresses with a blank or placeholder serial (N/A, unknown, 0) are omitted too. Click Copy and paste it back into the input to rescan only those printers.
 
 Exclude IPs that timed out
 When checked, timed-out addresses disappear from the grid and from every export. Printers that answered with an error still appear.
+
+Exclude IPs that have no serial number
+When checked, printers with no serial number (blank, whitespace, N/A, unknown, or 0) disappear from the grid, from every export (Excel, e-automate, MPS, FMAudit, Export all, and general CSV), and from the Responding IPs list. The same checkbox on the Automate Settings tab is used by scheduled and deployed QuMeter Auto runs after it is saved.
 
 Remarks
 The Remarks box is written into the e-automate Remarks column (and the e-automate sheet in the Excel workbook). The default is Imported by QuMeter. Leave it empty for a blank remarks field. Commas and quotes are escaped in the CSV. Optional tokens, replaced per printer: {date} {time} {ip} {serial} {model}. The same remarks text is used by Automate / QuMeter Auto (including scheduled and deployed runs) after it is saved.
@@ -207,12 +214,13 @@ $load.Add_Click({
     if ($d.ShowDialog() -eq 'OK') { $targets.Text = [System.IO.File]::ReadAllText($d.FileName) }
 })
 function Persist {
-    Save-Settings @{ community = $community.Text; version = $ver.SelectedItem.ToString(); port = [int]$port.Value; timeoutMs = [int]$timeout.Value; retries = [int]$retries.Value; targets = $targets.Text; excludeTimedOut = [bool]$excludeTo.Checked; remarks = $remarks.Text }
-    if ($script:cfg) { $script:cfg.eaRemarks = $remarks.Text }
+    Save-Settings @{ community = $community.Text; version = $ver.SelectedItem.ToString(); port = [int]$port.Value; timeoutMs = [int]$timeout.Value; retries = [int]$retries.Value; targets = $targets.Text; excludeTimedOut = [bool]$excludeTo.Checked; excludeNoSerial = [bool]$excludeNoSerial.Checked; remarks = $remarks.Text }
+    if ($script:cfg) { $script:cfg.eaRemarks = $remarks.Text; $script:cfg.excludeNoSerial = [bool]$excludeNoSerial.Checked }
     if (Test-Path -LiteralPath $configPath) {
         try {
             $cfgFile = Read-QmConfig -Path $configPath
             $cfgFile.eaRemarks = $remarks.Text
+            $cfgFile.excludeNoSerial = [bool]$excludeNoSerial.Checked
             Save-QmConfig -Config $cfgFile -Path $configPath
         } catch { }
     }
@@ -223,7 +231,7 @@ function Get-ExportMapping {
     return $map
 }
 $script:readings = New-Object System.Collections.Generic.List[QuMeterSnmp.PrinterReading]
-function Get-CurrentReadings { Get-QuMeterVisibleReadings -Readings @($script:readings) -ExcludeTimedOut $excludeTo.Checked }
+function Get-CurrentReadings { Get-QuMeterVisibleReadings -Readings @($script:readings) -ExcludeTimedOut $excludeTo.Checked -ExcludeNoSerial $excludeNoSerial.Checked }
 function Prompt-Save([string]$title, [string]$filter, [string]$defaultName) {
     $d = New-Object Windows.Forms.SaveFileDialog -Property @{ Title = $title; Filter = $filter; FileName = $defaultName }
     if ($d.ShowDialog() -eq 'OK') { return $d.FileName }
@@ -231,7 +239,7 @@ function Prompt-Save([string]$title, [string]$filter, [string]$defaultName) {
 }
 function Show-ManualResults {
     $grid.Rows.Clear()
-    $responded.Text = Get-QuMeterRespondedIpText -Readings @($script:readings)
+    $responded.Text = Get-QuMeterRespondedIpText -Readings @($script:readings) -ExcludeNoSerial $excludeNoSerial.Checked
     $visible = Get-CurrentReadings
     foreach ($r in $visible) {
         $i = $grid.Rows.Add($r.Ip, $r.Model, $r.Serial, $r.Total, $r.Mono, $r.Color, $r.Status, $r.SysDescr, $r.ErrorMessage)
@@ -244,6 +252,11 @@ function Show-ManualResults {
     $st.Text = "Done. $ok ok, $to timed out, $($script:readings.Count) total, $shown shown."
 }
 $excludeTo.Add_CheckedChanged({
+    if ($script:readings -and $script:readings.Count -gt 0) { Show-ManualResults }
+    Persist
+})
+$excludeNoSerial.Add_CheckedChanged({
+    if ($aExcludeNoSerial.Checked -ne $excludeNoSerial.Checked) { $aExcludeNoSerial.Checked = $excludeNoSerial.Checked }
     if ($script:readings -and $script:readings.Count -gt 0) { Show-ManualResults }
     Persist
 })
@@ -266,7 +279,7 @@ $exportXlsx.Add_Click({
     if (-not $list -or $list.Count -eq 0) { Msg 'No results to export.'; return }
     $path = Prompt-Save 'Export Excel workbook' 'Excel workbook (*.xlsx)|*.xlsx' ("QuMeter_{0}.xlsx" -f (Get-Date -Format 'yyyyMMdd_HHmmss'))
     if ($path) {
-        Export-QuMeterExcel -Readings $script:readings -Path $path -Mapping (Get-ExportMapping) -ExcludeTimedOut $excludeTo.Checked
+        Export-QuMeterExcel -Readings $script:readings -Path $path -Mapping (Get-ExportMapping) -ExcludeTimedOut $excludeTo.Checked -ExcludeNoSerial $excludeNoSerial.Checked
         $st.Text = "Saved $path"
     }
 })
@@ -313,7 +326,7 @@ $exportAll.Add_Click({
     $stamp = Get-Date -Format 'yyyyMMdd_HHmmss'
     $map = Get-ExportMapping
     Export-QuMeterGeneralCsv -Readings $list -Path (Join-Path $d.SelectedPath "QuMeter_$stamp.csv")
-    Export-QuMeterExcel -Readings $script:readings -Path (Join-Path $d.SelectedPath "QuMeter_$stamp.xlsx") -Mapping $map -ExcludeTimedOut $excludeTo.Checked
+    Export-QuMeterExcel -Readings $script:readings -Path (Join-Path $d.SelectedPath "QuMeter_$stamp.xlsx") -Mapping $map -ExcludeTimedOut $excludeTo.Checked -ExcludeNoSerial $excludeNoSerial.Checked
     Export-QuMeterEaCsv -Readings $list -Path (Join-Path $d.SelectedPath "QuMeter_eautomate_$stamp.csv") -Mapping $map
     Export-QuMeterEaXlsx -Readings $list -Path (Join-Path $d.SelectedPath "QuMeter_eautomate_$stamp.xlsx") -Mapping $map
     Export-QuMeterMpsCsv -Readings $list -Path (Join-Path $d.SelectedPath "QuMeter_mps_$stamp.csv")
@@ -395,6 +408,8 @@ $y += 30; New-L $S 'Keep files (days, 0 = forever)' 10 ($y + 3) | Out-Null; $aRe
 $y += 30; New-L $S 'e-automate format' 10 ($y + 3) | Out-Null; $aFmt = New-Cb $S 150 $y 100 @('basic','advanced') 'basic'
 New-L $S 'Meter source (Lists and Codes)' 265 ($y + 3) | Out-Null; $aSrc = New-T $S 445 $y 120
 $y += 30; New-L $S 'Meter remarks' 10 ($y + 3) | Out-Null; $aRemarks = New-T $S 150 $y 605 $initialRemarks
+$y += 30; $aExcludeNoSerial = Add-C $S (New-Object Windows.Forms.CheckBox -Property @{ Text = 'Exclude IPs that have no serial number from exports'; Location = "10,$y"; AutoSize = $true })
+if ($excludeNoSerial.Checked) { $aExcludeNoSerial.Checked = $true }
 $y += 30; New-L $S 'Mapping file' 10 ($y + 3) | Out-Null; $aMap = New-T $S 150 $y 440; $bMap = New-B $S 'Browse...' 595 ($y - 1) 75 24; $bMapEdit = New-B $S 'Edit' 675 ($y - 1) 80 24
 $y += 40
 $keyGroup = Add-C $S (New-Object Windows.Forms.GroupBox -Property @{ Text = 'API key (authenticates QuMeter <-> deployed QuMeter Auto)'; Location = "10,$y"; Size = '745,95' })
@@ -479,7 +494,7 @@ Files older than "Keep files" days are deleted from the output and log folders (
 
 GETTING METERS INTO E-AUTOMATE
 Same as the Manual tab: open EA_MeterImport.xlsx, set Source (must exist in Lists and Codes), paste the e-automate CSV rows under the headers on row 8, and run the import. Matching is by Serial.
-Meter remarks come from the Meter remarks box on this Settings tab (default Imported by QuMeter). Leave it empty for a blank remarks field. Optional tokens, replaced per printer: {date} {time} {ip} {serial} {model}. Click Save settings so scheduled and deployed QuMeter Auto runs use the new text (it is stored in config.json and copied on Deploy).
+Meter remarks come from the Meter remarks box on this Settings tab (default Imported by QuMeter). Leave it empty for a blank remarks field. Optional tokens, replaced per printer: {date} {time} {ip} {serial} {model}. Check "Exclude IPs that have no serial number from exports" to leave printers with a blank or placeholder serial (N/A, unknown, 0) out of the general, e-automate, and MPS files. Click Save settings so scheduled and deployed QuMeter Auto runs use the remarks and this checkbox (they are stored in config.json and copied on Deploy).
 
 OUTPUT TO A NETWORK SHARE
 Output and MPS folders can be UNC paths like \\fileserver\meters so files land where you and e-automate can reach them.
@@ -510,13 +525,16 @@ $pTip.Add_Resize({ $pTip.Controls[0].Size = "$($pTip.ClientSize.Width - 12),$($p
 
 $remarks.Add_TextChanged({ if ($aRemarks.Text -ne $remarks.Text) { $aRemarks.Text = $remarks.Text } })
 $aRemarks.Add_TextChanged({ if ($remarks.Text -ne $aRemarks.Text) { $remarks.Text = $aRemarks.Text } })
+$aExcludeNoSerial.Add_CheckedChanged({
+    if ($excludeNoSerial.Checked -ne $aExcludeNoSerial.Checked) { $excludeNoSerial.Checked = $aExcludeNoSerial.Checked }
+})
 # ------------------------------------------------------------------ config <-> GUI
 function Set-GuiFromConfig($c) {
     $aTargets.Text = (@($c.targets) -join "`r`n")
     $aComm.Text = $c.community; $aVer.SelectedItem = "$($c.version)"
     $aPort.Value = [decimal]$c.port; $aTimeout.Value = [decimal][math]::Max(100, $c.timeoutMs); $aRetries.Value = [decimal]$c.retries; $aConc.Value = [decimal][math]::Min(64, [math]::Max(1, $c.concurrency))
     $aOut.Text = $c.outputFolder; $aMps.Text = $c.mpsDropFolder; $aLogF.Text = $c.logFolder; $aRet.Value = [decimal]$c.retentionDays
-    $aFmt.SelectedItem = "$($c.eaFormat)"; $aSrc.Text = $c.eaSource; $aRemarks.Text = [string]$c.eaRemarks; $remarks.Text = [string]$c.eaRemarks; $aMap.Text = $c.mappingFile
+    $aFmt.SelectedItem = "$($c.eaFormat)"; $aSrc.Text = $c.eaSource; $aRemarks.Text = [string]$c.eaRemarks; $remarks.Text = [string]$c.eaRemarks; $aExcludeNoSerial.Checked = [bool]$c.excludeNoSerial; $excludeNoSerial.Checked = [bool]$c.excludeNoSerial; $aMap.Text = $c.mappingFile
     $s = $c.schedule
     $sName.Text = $s.taskName; $sFreq.SelectedItem = "$($s.frequency)"
     try { $sTime.Value = [datetime]::Today.Add([TimeSpan]::Parse("$($s.time)")) } catch { }
@@ -538,7 +556,7 @@ function Get-ConfigFromGui {
     $c.community = $aComm.Text.Trim(); $c.version = "$($aVer.SelectedItem)"; $c.port = [int]$aPort.Value
     $c.timeoutMs = [int]$aTimeout.Value; $c.retries = [int]$aRetries.Value; $c.concurrency = [int]$aConc.Value
     $c.outputFolder = $aOut.Text.Trim(); $c.mpsDropFolder = $aMps.Text.Trim(); $c.logFolder = $(if ($aLogF.Text.Trim()) { $aLogF.Text.Trim() } else { 'logs' })
-    $c.retentionDays = [int]$aRet.Value; $c.eaFormat = "$($aFmt.SelectedItem)"; $c.eaSource = $aSrc.Text.Trim(); $c.eaRemarks = $aRemarks.Text
+    $c.retentionDays = [int]$aRet.Value; $c.eaFormat = "$($aFmt.SelectedItem)"; $c.eaSource = $aSrc.Text.Trim(); $c.eaRemarks = $aRemarks.Text; $c.excludeNoSerial = [bool]$aExcludeNoSerial.Checked
     $c.mappingFile = $(if ($aMap.Text.Trim()) { $aMap.Text.Trim() } else { 'e-automate.mapping.json' })
     $c.schedule.taskName = $sName.Text.Trim(); $c.schedule.frequency = "$($sFreq.SelectedItem)"; $c.schedule.time = $sTime.Value.ToString('HH:mm')
     $c.schedule.dayOfWeek = "$($sDow.SelectedItem)"; $c.schedule.dayOfMonth = "$($sDom.SelectedItem)"

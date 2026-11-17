@@ -159,7 +159,10 @@ $status.counts.error = $readings.Count - $ok.Count - $status.counts.timeout
 $devs = @()
 foreach ($r in $readings) {
     $err = $r.ErrorMessage
-    if ($r.Status -eq 'OK' -and -not $r.Serial) { $err = 'No serial number reported: left out of the e-automate file (matching is by serial).' }
+    if ($r.Status -eq 'OK' -and -not (Test-QuMeterHasSerial $r)) {
+        if ($cfg.excludeNoSerial) { $err = 'No serial number reported: left out of the export files.' }
+        else { $err = 'No serial number reported: left out of the e-automate file (matching is by serial).' }
+    }
     $devs += [ordered]@{ ip = $r.Ip; status = $r.Status; serial = $r.Serial; model = $r.Model; total = $r.Total; mono = $r.Mono; color = $r.Color; error = $err }
     if ($r.Status -eq 'OK') { Log Info ("  {0}  serial={1} total={2} mono={3} color={4} model={5}" -f $r.Ip, $r.Serial, $r.Total, $r.Mono, $r.Color, $r.Model) }
     else { Log Warn ("  {0}  {1}: {2}" -f $r.Ip, $r.Status, $r.ErrorMessage) }
@@ -168,21 +171,22 @@ $status.devices = $devs
 Log Info ("SNMP done: ok={0} with-serial={1} timeout={2} error={3}" -f $status.counts.ok, $status.counts.withSerial, $status.counts.timeout, $status.counts.error)
 
 # ---- write files
+$exportReadings = Get-QuMeterVisibleReadings -Readings $readings -ExcludeTimedOut $false -ExcludeNoSerial ([bool]$cfg.excludeNoSerial)
 Step "Writing CSV files to $outFolder"
 $stamp = Get-Date -Format 'yyyyMMdd_HHmmss'
 try { if (-not (Test-Path -LiteralPath $outFolder)) { New-Item -ItemType Directory -Path $outFolder -Force | Out-Null } }
 catch { $status.writeErrors += "Cannot create output folder ${outFolder}: $($_.Exception.Message)" }
 $g = Join-Path $outFolder "QuMeter_$stamp.csv"
 $e = Join-Path $outFolder "QuMeter_eautomate_$stamp.csv"
-try { Export-QuMeterGeneralCsv -Readings $readings -Path $g; $status.files.general = $g; Log Info "Wrote $g" }
+try { Export-QuMeterGeneralCsv -Readings $exportReadings -Path $g; $status.files.general = $g; Log Info "Wrote $g" }
 catch { $status.writeErrors += "General CSV to ${g}: $($_.Exception.Message)" }
-try { Export-QuMeterEaCsv -Readings $readings -Path $e -Mapping $mapping; $status.files.eautomate = $e; Log Info "Wrote $e" }
+try { Export-QuMeterEaCsv -Readings $exportReadings -Path $e -Mapping $mapping; $status.files.eautomate = $e; Log Info "Wrote $e" }
 catch { $status.writeErrors += "e-automate CSV to ${e}: $($_.Exception.Message)" }
 if ($mpsFolder) {
     try {
         if (-not (Test-Path -LiteralPath $mpsFolder)) { New-Item -ItemType Directory -Path $mpsFolder -Force | Out-Null }
         $m = Join-Path $mpsFolder "QuMeter_mps_$stamp.csv"
-        Export-QuMeterMpsCsv -Readings $readings -Path $m
+        Export-QuMeterMpsCsv -Readings $exportReadings -Path $m
         $status.files.mps = $m; Log Info "Wrote MPS drop file $m"
     } catch { $status.writeErrors += "MPS CSV to ${mpsFolder}: $($_.Exception.Message)" }
 }
