@@ -1,9 +1,5 @@
 settings.json
 config.json
-apikey.user.dat
-apikey.dat
-apikey.install
-request.json
 *.log
 output/
 logs/
