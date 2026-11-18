@@ -9,7 +9,6 @@ $app = $PSScriptRoot
 $settingsPath = Join-Path $app 'settings.json'
 $mappingPath  = Join-Path $app 'e-automate.mapping.json'
 $configPath   = Join-Path $app 'config.json'
-$userKeyPath  = Join-Path $app 'apikey.user.dat'
 $psExe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
 
 function Load-Settings {
@@ -28,9 +27,6 @@ else {
     if ($imp) { $script:cfg = $imp; $script:importNote = "Imported settings from $legacy. Click Save settings to keep them." }
     else { $script:cfg = Get-QmDefaultConfig }
 }
-$script:apiKey = Read-QmUserApiKey -Path $userKeyPath
-$script:targetCred = $null; $script:targetCredFor = ''
-
 # ------------------------------------------------------------------ UI helpers
 $fontBold = New-Object Drawing.Font('Segoe UI', 9, [Drawing.FontStyle]::Bold)
 $fontMono = New-Object Drawing.Font('Consolas', 9)
@@ -178,10 +174,10 @@ Exclude IPs that timed out
 When checked, timed-out addresses disappear from the grid and from every export. Printers that answered with an error still appear.
 
 Exclude IPs that have no serial number
-When checked, printers with no serial number (blank, whitespace, N/A, unknown, or 0) disappear from the grid, from every export (Excel, e-automate, MPS, FMAudit, Export all, and general CSV), and from the Responding IPs list. The same checkbox on the Automate Settings tab is used by scheduled and deployed QuMeter Auto runs after it is saved.
+When checked, printers with no serial number (blank, whitespace, N/A, unknown, or 0) disappear from the grid, from every export (Excel, e-automate, MPS, FMAudit, Export all, and general CSV), and from the Responding IPs list. The same checkbox on the Automate Settings tab is used by scheduled QuMeter Auto runs after it is saved.
 
 Remarks
-The Remarks box is written into the e-automate Remarks column (and the e-automate sheet in the Excel workbook). The default is Imported by QuMeter. Leave it empty for a blank remarks field. Commas and quotes are escaped in the CSV. Optional tokens, replaced per printer: {date} {time} {ip} {serial} {model}. The same remarks text is used by Automate / QuMeter Auto (including scheduled and deployed runs) after it is saved.
+The Remarks box is written into the e-automate Remarks column (and the e-automate sheet in the Excel workbook). The default is Imported by QuMeter. Leave it empty for a blank remarks field. Commas and quotes are escaped in the CSV. Optional tokens, replaced per printer: {date} {time} {ip} {serial} {model}. The same remarks text is used by Automate / QuMeter Auto (including scheduled runs) after it is saved.
 
 Custom column names / Advanced format
 If your template or meter types use different names than B\W, Color and Total Count, click Edit mapping... (e-automate.mapping.json). Set "format": "advanced" for the Meter Import Advanced layout (one row per meter: Meter Type + Reading, with Source).
@@ -362,11 +358,10 @@ $script:scanTimer.Add_Tick({
 # ================================================================== AUTOMATE TAB
 $A = $tabAuto
 $sub = New-Object Windows.Forms.TabControl -Property @{ Dock = 'Fill' }
-$pSet = New-Object Windows.Forms.TabPage -Property @{ Text = 'Settings'; AutoScroll = $true; AutoScrollMinSize = New-Object Drawing.Size(900, 700) }
+$pSet = New-Object Windows.Forms.TabPage -Property @{ Text = 'Settings'; AutoScroll = $true; AutoScrollMinSize = New-Object Drawing.Size(900, 620) }
 $pSch = New-Object Windows.Forms.TabPage -Property @{ Text = 'Schedule (this PC)'; AutoScroll = $true; AutoScrollMinSize = New-Object Drawing.Size(900, 560) }
-$pDep = New-Object Windows.Forms.TabPage -Property @{ Text = 'Deploy to server'; AutoScroll = $true; AutoScrollMinSize = New-Object Drawing.Size(900, 700) }
 $pTip = New-Object Windows.Forms.TabPage -Property @{ Text = 'Tips'; AutoScroll = $true; AutoScrollMinSize = New-Object Drawing.Size(900, 500) }
-foreach ($pg in @($pSet,$pSch,$pDep,$pTip)) { [void]$sub.TabPages.Add($pg) }
+foreach ($pg in @($pSet,$pSch,$pTip)) { [void]$sub.TabPages.Add($pg) }
 $A.Controls.Add($sub)
 
 # --- Run once now bar (top)
@@ -412,15 +407,6 @@ $y += 30; $aExcludeNoSerial = Add-C $S (New-Object Windows.Forms.CheckBox -Prope
 if ($excludeNoSerial.Checked) { $aExcludeNoSerial.Checked = $true }
 $y += 30; New-L $S 'Mapping file' 10 ($y + 3) | Out-Null; $aMap = New-T $S 150 $y 440; $bMap = New-B $S 'Browse...' 595 ($y - 1) 75 24; $bMapEdit = New-B $S 'Edit' 675 ($y - 1) 80 24
 $y += 40
-$keyGroup = Add-C $S (New-Object Windows.Forms.GroupBox -Property @{ Text = 'API key (authenticates QuMeter <-> deployed QuMeter Auto)'; Location = "10,$y"; Size = '745,95' })
-New-L $keyGroup 'API key' 10 27 | Out-Null
-$aKey = New-T $keyGroup 70 24 400 $script:apiKey
-$aKey.UseSystemPasswordChar = $true
-$aKeyShow = Add-C $keyGroup (New-Object Windows.Forms.CheckBox -Property @{ Text = 'Show'; Location = '480,25'; AutoSize = $true })
-$aKeyGen = New-B $keyGroup 'Generate' 545 22 90 26
-$aKeyCopy = New-B $keyGroup 'Copy' 640 22 90 26
-(New-L $keyGroup "Saved encrypted for your Windows user only (DPAPI). Never written to config.json or logs. Deploy copies it to the target, where it is`nencrypted to that machine. The target signs every status report with it and only accepts Run requests signed with it. Change it? Deploy again." 10 55).ForeColor = 'DimGray'
-$y += 105
 $aSave = New-B $S 'Save settings' 10 $y 130 32
 $aSave.Font = $fontBold
 $aReload = New-B $S 'Reload' 145 $y 90 32
@@ -444,80 +430,34 @@ $sRemove = New-B $H 'Remove task' 175 185 110 32
 $sRefresh = New-B $H 'Refresh status' 290 185 110 32
 $sAdmin = New-B $H 'Restart QuMeter as administrator' 405 185 220 32
 $sStatus = Add-C $H (New-Object Windows.Forms.TextBox -Property @{ Location = '10,230'; Size = '1010,200'; Multiline = $true; ReadOnly = $true; ScrollBars = 'Vertical'; Font = $fontMono; Anchor = 'Top,Left,Right' })
-(New-L $H "The schedule (frequency, time, days) is also used when you deploy to a server. The service account password is handed to Windows Task Scheduler only; QuMeter never saves it.`n'Current user' needs no admin rights but only runs while you're logged on. Use SYSTEM or a service account to run with nobody logged on." 10 440).ForeColor = 'DimGray'
-
-# --- Deploy sub-tab
-$D = $pDep
-New-L $D 'Target computer' 10 13 | Out-Null;   $dTarget = New-T $D 160 10 250
-New-L $D 'Install path on target' 10 43 | Out-Null; $dPath = New-T $D 160 40 250
-New-L $D 'Admin share (blank = C$)' 10 73 | Out-Null; $dShare = New-T $D 160 70 80
-New-L $D 'Method' 250 73 | Out-Null; $dMethod = New-Cb $D 300 70 110 @('Auto','WinRM','AdminShare') 'Auto'
-$dCurrent = Add-C $D (New-Object Windows.Forms.CheckBox -Property @{ Text = 'Connect with my current Windows login (uncheck to enter an admin account)'; Location = '10,100'; Size = '420,22' })
-New-L $D 'Task runs as' 10 131 | Out-Null; $dRunAs = New-Cb $D 160 128 250 @('SYSTEM (no password)','Service account (prompted)') 'SYSTEM (no password)'
-New-L $D 'Service account' 10 161 | Out-Null; $dUser = New-T $D 160 158 250
-New-L $D 'Output folder on target' 10 191 | Out-Null; $dOut = New-T $D 160 188 250
-New-L $D 'MPS folder on target' 10 221 | Out-Null; $dMps = New-T $D 160 218 250
-$dRunAfter = Add-C $D (New-Object Windows.Forms.CheckBox -Property @{ Text = 'Run once after deploying to verify'; Location = '10,248'; Size = '240,22' })
-New-L $D 'Wait up to (min)' 260 251 | Out-Null; $dWait = New-N $D 360 248 50 1 120 15
-$dDeploy = New-B $D 'Deploy / Update' 10 282 130 34
-$dDeploy.Font = $fontBold
-$dRun = New-B $D 'Run once on target' 145 282 140 34
-$dStat = New-B $D 'Status' 290 282 120 34
-$dLog  = New-B $D 'Fetch log' 10 320 130 28
-$dRemove = New-B $D 'Remove from target' 145 320 140 28
-$dPkg = New-B $D 'Export deployment package...' 10 354 275 28
-$dForget = New-B $D 'Forget login' 290 320 120 28
-$dBar = Add-C $D (New-Object Windows.Forms.ProgressBar -Property @{ Location = '10,392'; Size = '400,16'; Style = 'Continuous' })
-$dOp = Add-C $D (New-Object Windows.Forms.TextBox -Property @{ Location = '10,414'; Size = '400,150'; Multiline = $true; ReadOnly = $true; ScrollBars = 'Vertical'; Font = $fontMono; Anchor = 'Top,Bottom,Left' })
-
-$dHead = Add-C $D (New-Object Windows.Forms.Label -Property @{ Location = '425,10'; Size = '600,26'; Text = 'Deployed instance status: not checked yet'; Font = New-Object Drawing.Font('Segoe UI', 11, [Drawing.FontStyle]::Bold); Anchor = 'Top,Left,Right'; ForeColor = 'DimGray' })
-$dInfo = Add-C $D (New-Object Windows.Forms.TextBox -Property @{ Location = '425,40'; Size = '600,170'; Multiline = $true; ReadOnly = $true; ScrollBars = 'Vertical'; Font = $fontMono; Anchor = 'Top,Left,Right' })
-New-L $D 'Per-printer results from the last run on the target:' 425 216 | Out-Null
-$dGrid = Add-C $D (New-Object Windows.Forms.DataGridView -Property @{ Location = '425,236'; Size = '600,160'; Anchor = 'Top,Left,Right'; AllowUserToAddRows = $false; ReadOnly = $true; AutoSizeColumnsMode = 'Fill'; RowHeadersVisible = $false; BackgroundColor = 'White' })
-foreach ($col in @('IP','Status','Serial','Model','Total','Mono','Color','Error')) { [void]$dGrid.Columns.Add($col, $col) }
-$dGrid.Columns['Error'].FillWeight = 200
-New-L $D 'Target log (latest):' 425 402 | Out-Null
-$dLogBox = Add-C $D (New-Object Windows.Forms.TextBox -Property @{ Location = '425,420'; Size = '600,144'; Multiline = $true; ReadOnly = $true; ScrollBars = 'Both'; WordWrap = $false; Font = $fontMono; Anchor = 'Top,Bottom,Left,Right' })
+(New-L $H "The service account password is handed to Windows Task Scheduler only; QuMeter never saves it.`n'Current user' needs no admin rights but only runs while you're logged on. Use SYSTEM or a service account to run with nobody logged on." 10 440).ForeColor = 'DimGray'
 
 # --- Tips sub-tab
 $autoTips = @"
 TIPS - AUTOMATE
 
 WHAT IT DOES
-Each run (scheduled, Run once now, or Run once on target) reads every printer over SNMP and writes, with a date/time stamp:
+Each run (scheduled, or Run once now) reads every printer over SNMP and writes, with a date/time stamp:
   - QuMeter_<stamp>.csv            general results for every address (records / Excel)
   - QuMeter_eautomate_<stamp>.csv  e-automate meter import rows (OK + serial only)
   - QuMeter_mps_<stamp>.csv        optional, into the MPS drop folder
   - logs\QuMeter_<date>.log        what happened, per printer
-  - logs\status.json               signed run status the GUI reads (success, per-printer errors, files, write errors)
+  - logs\status.json               run status the GUI reads (success, per-printer errors, files, write errors)
 Files older than "Keep files" days are deleted from the output and log folders (never from the MPS folder).
 
 GETTING METERS INTO E-AUTOMATE
 Same as the Manual tab: open EA_MeterImport.xlsx, set Source (must exist in Lists and Codes), paste the e-automate CSV rows under the headers on row 8, and run the import. Matching is by Serial.
-Meter remarks come from the Meter remarks box on this Settings tab (default Imported by QuMeter). Leave it empty for a blank remarks field. Optional tokens, replaced per printer: {date} {time} {ip} {serial} {model}. Check "Exclude IPs that have no serial number from exports" to leave printers with a blank or placeholder serial (N/A, unknown, 0) out of the general, e-automate, and MPS files. Click Save settings so scheduled and deployed QuMeter Auto runs use the remarks and this checkbox (they are stored in config.json and copied on Deploy).
+Meter remarks come from the Meter remarks box on this Settings tab (default Imported by QuMeter). Leave it empty for a blank remarks field. Optional tokens, replaced per printer: {date} {time} {ip} {serial} {model}. Check "Exclude IPs that have no serial number from exports" to leave printers with a blank or placeholder serial (N/A, unknown, 0) out of the general, e-automate, and MPS files. Click Save settings so scheduled QuMeter Auto runs use the remarks and this checkbox (they are stored in config.json).
 
 OUTPUT TO A NETWORK SHARE
 Output and MPS folders can be UNC paths like \\fileserver\meters so files land where you and e-automate can reach them.
-If the task runs as SYSTEM it uses the computer account (e.g. PAPERCUT01$) on the network. SYSTEM can't write to a share unless that computer account has write rights on the share and folder. For UNC output, a domain service account with write access is recommended (Task runs as > Service account).
+If the task runs as SYSTEM it uses the computer account (e.g. SERVER$) on the network. SYSTEM can't write to a share unless that computer account has write rights on the share and folder. For UNC output, a domain service account with write access is recommended (Run as > Service account).
 
 THIS PC (Schedule tab)
 Install / Update creates the Windows task "QuMeter Auto". Current user = no admin needed but only while logged on. SYSTEM / service account = runs with nobody logged on (admin needed to install).
 
-DEPLOY TO A SERVER (e.g. the PaperCut server)
-Requirements:
-  - An account that is a local administrator on the target (your login if you're a domain admin, otherwise uncheck the box and you'll be asked; the password is kept in memory only until you close QuMeter or click Forget login).
-  - WinRM on the target (best): run  Enable-PSRemoting -Force  on it once; TCP 5985 open. Use the computer name on a domain; for an IP, add it to TrustedHosts on this PC.
-    OR the admin share: File and Printer Sharing (TCP 445) + C$ share, plus Remote Scheduled Tasks Management (RPC) firewall rules for schtasks.
-  - From the target: UDP 161 (SNMP) to every printer, and write access to the output/MPS folders.
-Deploy copies the engine to C:\ProgramData\QuMeter on the target, installs the API key, registers the task, reads it back, and (optional) runs it once and shows the result.
-Status shows the task's last/next run and result, the signed status, per-printer errors and the latest log. Run once on target triggers it now and waits for the result. Remove from target deletes the task (and program files; output and logs are kept).
-If remote install is blocked: Export deployment package, copy the zip to the server, unzip, right-click Install.bat > Run as administrator. Delete the zip afterwards if it includes the API key.
-
-API KEY
-Generate one in Settings and Save. The deployed instance signs status.json with it (HMAC-SHA256) and only accepts Run requests signed with it, so you know a status really came from your instance and nobody else can trigger it with a forged request. If the GUI says "API key mismatch", the key here differs from the one deployed: Deploy / Update again.
-
 ERRORS
-Anything that goes wrong is shown in red at the top of the Deploy tab: can't reach the target, WinRM/admin share failures, task failed, printers timing out, files that couldn't be written, bad settings, or API key problems.
+Anything that goes wrong is shown on Run once now and in Last run details: printers timing out, files that couldn't be written, or bad settings. The Schedule tab also shows the task's last/next run and result.
 "@
 New-Tips $pTip $autoTips 6 6 1020 470 'Top,Bottom,Left,Right' | Out-Null
 $pTip.Add_Resize({ $pTip.Controls[0].Size = "$($pTip.ClientSize.Width - 12),$($pTip.ClientSize.Height - 12)" })
@@ -542,11 +482,6 @@ function Set-GuiFromConfig($c) {
     $sRunAs.SelectedIndex = @{ CurrentUser = 0; SYSTEM = 1; Account = 2 }["$($s.runAs)"]
     if ($sRunAs.SelectedIndex -lt 0) { $sRunAs.SelectedIndex = 0 }
     $sUser.Text = $s.runAsUser
-    $d = $c.deploy
-    $dTarget.Text = $d.target; $dPath.Text = $d.installPath; $dShare.Text = $d.adminShare; $dMethod.SelectedItem = "$($d.method)"
-    $dCurrent.Checked = [bool]$d.useCurrentLogin; $dRunAs.SelectedIndex = $(if ($d.runAs -eq 'Account') { 1 } else { 0 })
-    $dUser.Text = $d.runAsUser; $dOut.Text = $d.outputFolder; $dMps.Text = $d.mpsDropFolder
-    $dRunAfter.Checked = [bool]$d.runAfterDeploy; $dWait.Value = [decimal][math]::Min(120, [math]::Max(1, $d.runTimeoutMin))
     Update-Enables
 }
 function Get-ConfigFromGui {
@@ -561,16 +496,11 @@ function Get-ConfigFromGui {
     $c.schedule.taskName = $sName.Text.Trim(); $c.schedule.frequency = "$($sFreq.SelectedItem)"; $c.schedule.time = $sTime.Value.ToString('HH:mm')
     $c.schedule.dayOfWeek = "$($sDow.SelectedItem)"; $c.schedule.dayOfMonth = "$($sDom.SelectedItem)"
     $c.schedule.runAs = @('CurrentUser','SYSTEM','Account')[$sRunAs.SelectedIndex]; $c.schedule.runAsUser = $sUser.Text.Trim()
-    $c.deploy.target = $dTarget.Text.Trim(); $c.deploy.installPath = $dPath.Text.Trim(); $c.deploy.adminShare = $dShare.Text.Trim()
-    $c.deploy.method = "$($dMethod.SelectedItem)"; $c.deploy.useCurrentLogin = $dCurrent.Checked
-    $c.deploy.runAs = $(if ($dRunAs.SelectedIndex -eq 1) { 'Account' } else { 'SYSTEM' }); $c.deploy.runAsUser = $dUser.Text.Trim()
-    $c.deploy.outputFolder = $(if ($dOut.Text.Trim()) { $dOut.Text.Trim() } else { 'output' }); $c.deploy.mpsDropFolder = $dMps.Text.Trim()
-    $c.deploy.runAfterDeploy = $dRunAfter.Checked; $c.deploy.runTimeoutMin = [int]$dWait.Value
     return $c
 }
 function Update-Enables {
     $sDow.Enabled = ($sFreq.SelectedItem -eq 'Weekly'); $sDom.Enabled = ($sFreq.SelectedItem -eq 'Monthly')
-    $sUser.Enabled = ($sRunAs.SelectedIndex -eq 2); $dUser.Enabled = ($dRunAs.SelectedIndex -eq 1)
+    $sUser.Enabled = ($sRunAs.SelectedIndex -eq 2)
     $sAdmin.Visible = -not (Test-IsAdmin)
 }
 function Save-All([switch]$Quiet) {
@@ -583,15 +513,13 @@ function Save-All([switch]$Quiet) {
     }
     Save-QmConfig -Config $c -Path $configPath
     $script:cfg = Read-QmConfig -Path $configPath
-    $script:apiKey = $aKey.Text.Trim()
-    try { Save-QmUserApiKey -Key $script:apiKey -Path $userKeyPath } catch { Msg "Could not save the API key: $($_.Exception.Message)" 'Warning' }
     $remarks.Text = $aRemarks.Text
     Persist
     $aValid.ForeColor = 'DarkGreen'; $aValid.Text = "Saved $(Get-Date -Format 'HH:mm:ss'). Schedule: $(Get-QmScheduleText $script:cfg.schedule)."
     return $script:cfg
 }
 
-foreach ($ctl in @($sFreq,$sRunAs,$dRunAs)) { $ctl.Add_SelectedIndexChanged({ Update-Enables }) }
+foreach ($ctl in @($sFreq,$sRunAs)) { $ctl.Add_SelectedIndexChanged({ Update-Enables }) }
 $aCopy.Add_Click({ $aTargets.Text = $targets.Text; $aComm.Text = $community.Text; $aVer.SelectedItem = $ver.SelectedItem; $aPort.Value = $port.Value; $aTimeout.Value = $timeout.Value; $aRetries.Value = $retries.Value })
 $aLoad.Add_Click({
     $d = New-Object Windows.Forms.OpenFileDialog -Property @{ Filter = 'Text files (*.txt;*.csv)|*.txt;*.csv|All files (*.*)|*.*' }
@@ -600,14 +528,8 @@ $aLoad.Add_Click({
 $bOut.Add_Click({ Browse-Folder $aOut }); $bMps.Add_Click({ Browse-Folder $aMps }); $bLog.Add_Click({ Browse-Folder $aLogF })
 $bMap.Add_Click({ $d = New-Object Windows.Forms.OpenFileDialog -Property @{ Filter = 'JSON (*.json)|*.json' }; if ($d.ShowDialog() -eq 'OK') { $aMap.Text = $d.FileName } })
 $bMapEdit.Add_Click({ $p = Resolve-QmPath $(if ($aMap.Text) { $aMap.Text } else { 'e-automate.mapping.json' }) $app; Start-Process notepad.exe -ArgumentList "`"$p`"" })
-$aKeyShow.Add_CheckedChanged({ $aKey.UseSystemPasswordChar = -not $aKeyShow.Checked })
-$aKeyGen.Add_Click({
-    if ($aKey.Text -and -not (Ask 'Replace the current API key? Deployed instances keep the old key until you Deploy / Update them.')) { return }
-    $aKey.Text = New-QmApiKey; $aValid.ForeColor = 'DarkOrange'; $aValid.Text = 'New API key generated. Click Save settings, then Deploy / Update your servers.'
-})
-$aKeyCopy.Add_Click({ if ($aKey.Text) { [Windows.Forms.Clipboard]::SetText($aKey.Text) } })
 $aSave.Add_Click({ [void](Save-All) })
-$aReload.Add_Click({ $script:cfg = Read-QmConfig -Path $configPath; Set-GuiFromConfig $script:cfg; $aKey.Text = Read-QmUserApiKey -Path $userKeyPath })
+$aReload.Add_Click({ $script:cfg = Read-QmConfig -Path $configPath; Set-GuiFromConfig $script:cfg })
 
 # ------------------------------------------------------------------ Run once now (local)
 $script:runProc = $null; $script:runProgFile = $null; $script:runPos = 0
@@ -616,15 +538,11 @@ function Read-LocalStatus {
     $lf = Get-LocalFolder 'logFolder'; if (-not $lf) { $lf = Join-Path $app 'logs' }
     $p = Join-Path $lf 'status.json'
     if (-not (Test-Path -LiteralPath $p)) { return $null }
-    $json = [System.IO.File]::ReadAllText($p)
-    $probe = Read-QmSignedEnvelope -Json $json
-    $key = $(if ($probe.Signed) { $script:apiKey } else { $null })
-    return Read-QmSignedEnvelope -Json $json -Key $key
+    try { return Read-QmStatus -Json ([System.IO.File]::ReadAllText($p)) } catch { return $null }
 }
 function Show-LocalResult {
-    $env = Read-LocalStatus
-    if (-not $env -or -not $env.Data) { $runStatus.ForeColor = 'Firebrick'; $runStatus.Text = 'The run did not produce a status. See the log below.'; return }
-    $s = $env.Data
+    $s = Read-LocalStatus
+    if (-not $s) { $runStatus.ForeColor = 'Firebrick'; $runStatus.Text = 'The run did not produce a status. See the log below.'; return }
     if ($s.run.success) { $runStatus.ForeColor = 'DarkGreen'; $runStatus.Text = "Success: $($s.counts.ok) of $($s.counts.hosts) printers read, files written ($($s.run.finishedAt))." }
     elseif ($s.run.partial) { $runStatus.ForeColor = 'DarkOrange'; $runStatus.Text = "Completed with errors: $($s.run.error)" }
     else { $runStatus.ForeColor = 'Firebrick'; $runStatus.Text = "FAILED [$($s.run.errorStage)]: $($s.run.error)" }
@@ -685,10 +603,10 @@ $lnkLog.Add_LinkClicked({
     if ($l) { Start-Process notepad.exe -ArgumentList "`"$($l.FullName)`"" } else { Msg "No log yet in $lf" }
 })
 $lnkSt.Add_LinkClicked({
-    $env = Read-LocalStatus
-    if (-not $env -or -not $env.Data) { Msg 'No run on this PC yet.'; return }
-    $txt = ConvertTo-QmStatusText $env.Data $env
-    $bad = @($env.Data.devices | Where-Object { $_.status -ne 'OK' -or $_.error })
+    $s = Read-LocalStatus
+    if (-not $s) { Msg 'No run on this PC yet.'; return }
+    $txt = ConvertTo-QmStatusText $s
+    $bad = @($s.devices | Where-Object { $_.status -ne 'OK' -or $_.error })
     if ($bad.Count) { $txt += "`r`n`r`nPrinters with problems:`r`n" + (($bad | ForEach-Object { "  $($_.ip)  $($_.status)  $($_.error)" }) -join "`r`n") }
     Msg $txt
 })
@@ -698,8 +616,8 @@ function Show-LocalTask {
     try {
         $t = Get-QmLocalTaskStatus -TaskName $sName.Text.Trim()
         $sStatus.Text = "Task '$($sName.Text)': $($t.State)`r`nRun as: $($t.RunAs)`r`nLast run: $($t.LastRunTime)   Result: $($t.LastResult)`r`nNext run: $($t.NextRunTime)"
-        $env = Read-LocalStatus
-        if ($env -and $env.Data) { $sStatus.Text += "`r`n`r`n" + (ConvertTo-QmStatusText $env.Data $env) }
+        $st = Read-LocalStatus
+        if ($st) { $sStatus.Text += "`r`n`r`n" + (ConvertTo-QmStatusText $st) }
     } catch { $sStatus.Text = "Could not read task: $($_.Exception.Message)" }
 }
 $sRefresh.Add_Click({ Show-LocalTask })
@@ -712,7 +630,7 @@ $sInstall.Add_Click({
         if (-not $cred) { return }
     }
     try {
-        $t = Install-QmLocalTask -Config $c -AppDir $app -RunAsCredential $cred -ApiKey $script:apiKey
+        $t = Install-QmLocalTask -Config $c -AppDir $app -RunAsCredential $cred
         Show-LocalTask
         Msg "Scheduled '$($c.schedule.taskName)' $(Get-QmScheduleText $c.schedule). Next run: $($t.NextRunTime)"
     } catch { $sStatus.Text = "Install failed: $($_.Exception.Message)"; Msg "Install failed: $($_.Exception.Message)" 'Error' }
@@ -726,143 +644,6 @@ $sAdmin.Add_Click({
     try { Start-Process $psExe -Verb RunAs -ArgumentList "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$(Join-Path $app 'QuMeter.ps1')`""; $f.Close() } catch { }
 })
 
-# ------------------------------------------------------------------ background ops (deploy / status / run on target)
-$script:opQueue = New-Object 'System.Collections.Concurrent.ConcurrentQueue[string]'
-$script:bg = $null
-$bgBoot = {
-    param($appDir, $queue, $workText, $p)
-    $ErrorActionPreference = 'Stop'
-    . (Join-Path $appDir 'QuMeterCore.ps1')
-    $Log = { param($m) $queue.Enqueue(('{0} {1}' -f (Get-Date -Format 'HH:mm:ss'), $m)) }.GetNewClosure()
-    $work = [scriptblock]::Create($workText)
-    try { $r = & $work $p $Log; return @{ Ok = $true; Result = $r } }
-    catch { return @{ Ok = $false; Error = $_.Exception.Message } }
-}
-$depButtons = @($dDeploy,$dRun,$dStat,$dLog,$dRemove,$dPkg)
-function Start-Op([string]$title, [scriptblock]$work, [hashtable]$params, [scriptblock]$onDone) {
-    if ($script:bg) { Msg 'Another operation is still running.'; return }
-    foreach ($b in $depButtons) { $b.Enabled = $false }
-    $dBar.Style = 'Marquee'; $dBar.MarqueeAnimationSpeed = 30
-    $dOp.AppendText("---- $title ($(Get-Date -Format 'HH:mm:ss'))`r`n")
-    $dHead.ForeColor = 'DimGray'; $dHead.Text = "$title..."
-    $rs = [runspacefactory]::CreateRunspace(); $rs.Open()
-    $ps = [powershell]::Create(); $ps.Runspace = $rs
-    [void]$ps.AddScript($bgBoot).AddArgument($app).AddArgument($script:opQueue).AddArgument($work.ToString()).AddArgument($params)
-    $script:bg = @{ Ps = $ps; Handle = $ps.BeginInvoke(); OnDone = $onDone; Title = $title }
-    $script:opTimer.Start()
-}
-$script:opTimer = New-Object Windows.Forms.Timer -Property @{ Interval = 250 }
-$script:opTimer.Add_Tick({
-    $m = $null
-    while ($script:opQueue.TryDequeue([ref]$m)) { $dOp.AppendText($m + "`r`n") }
-    $b = $script:bg
-    if (-not $b -or -not $b.Handle.IsCompleted) { return }
-    $script:opTimer.Stop()
-    $out = $null
-    try { $out = @($b.Ps.EndInvoke($b.Handle))[0] } catch { $out = @{ Ok = $false; Error = $_.Exception.Message } }
-    if (-not $out) { $err = $(if ($b.Ps.Streams.Error.Count) { $b.Ps.Streams.Error[0].ToString() } else { 'No result returned.' }); $out = @{ Ok = $false; Error = $err } }
-    while ($script:opQueue.TryDequeue([ref]$m)) { $dOp.AppendText($m + "`r`n") }
-    try { $b.Ps.Runspace.Dispose(); $b.Ps.Dispose() } catch { }
-    $script:bg = $null
-    $dBar.Style = 'Continuous'; $dBar.Value = 0
-    foreach ($x in $depButtons) { $x.Enabled = $true }
-    if ($out.Ok) { & $b.OnDone $out.Result }
-    else { Show-OpError $b.Title $out.Error }
-})
-function Show-OpError([string]$title, [string]$err) {
-    $dHead.ForeColor = 'Firebrick'; $dHead.Text = "ERROR: $title failed"
-    $dInfo.Text = "$err"
-    $dOp.AppendText("ERROR: $err`r`n")
-}
-function Show-RemoteResult($r, [string]$prefix = '') {
-    if (-not $r) { Show-OpError $prefix 'No result.'; return }
-    $lines = @("Target: $($r.Target)   via $($r.Method)$(if ($r.RequestId) { "   request $($r.RequestId)" })")
-    if ($r.Task) { $lines += "Task: $($r.Task.State)   run as: $($r.Task.RunAs)"; $lines += "Last run: $($r.Task.LastRunTime)   result: $($r.Task.LastResult)"; $lines += "Next run: $($r.Task.NextRunTime)" }
-    $lines += ''
-    $lines += $r.StatusText
-    $errs = @($r.Errors | Where-Object { $_ })
-    if ($errs.Count) { $lines += ''; $lines += 'PROBLEMS:'; $lines += ($errs | ForEach-Object { " - $_" }) }
-    $dInfo.Text = ($lines -join "`r`n")
-    $dGrid.Rows.Clear()
-    if ($r.Status) {
-        foreach ($d in @($r.Status.devices)) {
-            $i = $dGrid.Rows.Add($d.ip, $d.status, $d.serial, $d.model, $d.total, $d.mono, $d.color, $d.error)
-            if ($d.status -ne 'OK' -or $d.error) { $dGrid.Rows[$i].DefaultCellStyle.ForeColor = [Drawing.Color]::Firebrick }
-        }
-    }
-    $dLogBox.Text = "$($r.LogTail)"
-    $dLogBox.SelectionStart = $dLogBox.TextLength; $dLogBox.ScrollToCaret()
-    $s = $r.Status
-    $taskBad = ($r.Task -and -not $r.Task.Exists)
-    if ($taskBad) { $dHead.ForeColor = 'Firebrick'; $dHead.Text = "$prefix PROBLEM: task is not installed on $($r.Target)" }
-    elseif ($r.Envelope -and $r.Envelope.Problem -and $r.Envelope.Signed) { $dHead.ForeColor = 'Firebrick'; $dHead.Text = "$prefix PROBLEM: $($r.Envelope.Problem)" }
-    elseif ($s -and -not $s.run.success) { $dHead.ForeColor = 'Firebrick'; $dHead.Text = "$prefix Last run $(if ($s.run.partial) { 'had errors' } else { 'FAILED' }): $($s.run.error)" }
-    elseif ($errs.Count) { $dHead.ForeColor = 'DarkOrange'; $dHead.Text = "$prefix Warning: $($errs[0])" }
-    elseif ($s) { $dHead.ForeColor = 'DarkGreen'; $dHead.Text = "$prefix OK: last run $($s.run.finishedAt), $($s.counts.ok)/$($s.counts.hosts) printers read" }
-    else { $dHead.ForeColor = 'DarkOrange'; $dHead.Text = "$prefix Installed, no run reported yet" }
-    $dHead.Text = $dHead.Text.Trim()
-}
-function Get-TargetCred {
-    if ($dCurrent.Checked) { return $null }
-    $t = $dTarget.Text.Trim()
-    if ($script:targetCred -and $script:targetCredFor -eq $t) { return $script:targetCred }
-    $c = Get-Credential -Message "Administrator account on $t (kept in memory only)"
-    if (-not $c) { throw 'cancelled' }
-    $script:targetCred = $c; $script:targetCredFor = $t
-    return $c
-}
-function Get-DeployInputs {
-    $c = Save-All; if (-not $c) { return $null }
-    if (-not $c.deploy.target) { Msg 'Enter the target computer name or IP.' 'Warning'; return $null }
-    try { $cred = Get-TargetCred } catch { return $null }
-    return @{ Config = $c; Cred = $cred; Key = $script:apiKey; AppDir = $app }
-}
-$ctxOpen = 'New-QmRemoteContext -Target $p.Config.deploy.target -InstallPath $p.Config.deploy.installPath -AdminShare $p.Config.deploy.adminShare -Method $p.Config.deploy.method -Credential $p.Cred -Log $Log'
-
-$dDeploy.Add_Click({
-    $p = Get-DeployInputs; if (-not $p) { return }
-    if ($p.Config.deploy.runAs -eq 'Account') {
-        $ra = Get-Credential -UserName $p.Config.deploy.runAsUser -Message 'Service account the task runs as on the target (password goes to Task Scheduler only, not saved).'
-        if (-not $ra) { return }
-        $p.RunAs = $ra
-    }
-    if (-not $p.Key -and -not (Ask 'No API key is set, so status from the target will not be authenticated. Deploy anyway? (Generate one in Settings for authenticated status.)')) { return }
-    Start-Op "Deploy to $($p.Config.deploy.target)" { param($p, $Log) Invoke-QmDeploy -Config $p.Config -AppDir $p.AppDir -Credential $p.Cred -RunAsCredential $p.RunAs -ApiKey $p.Key -Log $Log } $p { param($r) Show-RemoteResult $r 'Deployed.' }
-})
-$dStat.Add_Click({
-    $p = Get-DeployInputs; if (-not $p) { return }
-    Start-Op "Status of $($p.Config.deploy.target)" ([scriptblock]::Create("param(`$p, `$Log) `$ctx = $ctxOpen; try { Get-QmRemoteStatus -Ctx `$ctx -TaskName `$p.Config.schedule.taskName -ApiKey `$p.Key } finally { Close-QmRemoteContext `$ctx }")) $p { param($r) Show-RemoteResult $r }
-})
-$dLog.Add_Click({
-    $p = Get-DeployInputs; if (-not $p) { return }
-    Start-Op "Fetch log from $($p.Config.deploy.target)" ([scriptblock]::Create("param(`$p, `$Log) `$ctx = $ctxOpen; try { Get-QmRemoteStatus -Ctx `$ctx -TaskName `$p.Config.schedule.taskName -ApiKey `$p.Key -LogTail 2000 } finally { Close-QmRemoteContext `$ctx }")) $p { param($r) Show-RemoteResult $r }
-})
-$dRun.Add_Click({
-    $p = Get-DeployInputs; if (-not $p) { return }
-    Start-Op "Run once on $($p.Config.deploy.target)" ([scriptblock]::Create("param(`$p, `$Log) `$ctx = $ctxOpen; try { Invoke-QmRemoteRunOnce -Ctx `$ctx -TaskName `$p.Config.schedule.taskName -ApiKey `$p.Key -TimeoutMinutes `$p.Config.deploy.runTimeoutMin -Log `$Log } finally { Close-QmRemoteContext `$ctx }")) $p { param($r) Show-RemoteResult $r 'Run finished.' }
-})
-$dRemove.Add_Click({
-    $p = Get-DeployInputs; if (-not $p) { return }
-    $ans = [Windows.Forms.MessageBox]::Show("Remove the QuMeter Auto task from $($p.Config.deploy.target)?`n`nYes = remove task and program files (keeps output and logs)`nNo = remove the task only", 'QuMeter', 'YesNoCancel', 'Question')
-    if ($ans -eq 'Cancel') { return }
-    $p.Delete = ($ans -eq 'Yes')
-    Start-Op "Remove from $($p.Config.deploy.target)" ([scriptblock]::Create("param(`$p, `$Log) `$ctx = $ctxOpen; try { Remove-QmRemote -Ctx `$ctx -TaskName `$p.Config.schedule.taskName -DeleteFiles:`$p.Delete -Log `$Log; 'removed' } finally { Close-QmRemoteContext `$ctx }")) $p { param($r) $dHead.ForeColor = 'DimGray'; $dHead.Text = 'Removed from target.'; $dInfo.Text = ''; $dGrid.Rows.Clear() }
-})
-$dForget.Add_Click({ $script:targetCred = $null; $script:targetCredFor = ''; $dOp.AppendText("Saved login forgotten.`r`n") })
-$dPkg.Add_Click({
-    $c = Save-All; if (-not $c) { return }
-    $name = 'QuMeterAuto-Deploy_{0}_{1}.zip' -f $(if ($c.deploy.target) { $c.deploy.target -replace '[^\w\.-]','_' } else { 'server' }), (Get-Date -Format 'yyyyMMdd')
-    $path = Prompt-Save 'Export deployment package' 'Zip (*.zip)|*.zip' $name
-    if (-not $path) { return }
-    $key = $null
-    if ($script:apiKey) { if (Ask "Include the API key in the package?`n`nYes = the server is authenticated right away (the zip then contains the key in plain text until installed - delete it afterwards).`nNo = no key on the server (status will be unsigned).") { $key = $script:apiKey } }
-    try {
-        New-QmDeployPackage -Config $c -AppDir $app -OutZip $path -ApiKey $key | Out-Null
-        $dOp.AppendText("Package written: $path`r`n")
-        Msg "Package saved:`n$path`n`nCopy it to the server, unzip, and right-click Install.bat > Run as administrator. It installs to $($c.deploy.installPath), registers the task ($(Get-QmScheduleText $c.schedule)) and runs it once."
-    } catch { Msg "Could not build the package: $($_.Exception.Message)" 'Error' }
-})
-
 # ------------------------------------------------------------------ start
 Set-GuiFromConfig $script:cfg
 if ($script:importNote) { $aValid.ForeColor = 'DarkOrange' }
@@ -870,8 +651,6 @@ if (Test-Path -LiteralPath $configPath) { try { Show-LocalResult; if (-not (Read
 Show-LocalTask
 $f.Add_FormClosing({
     Persist
-    foreach ($t in @($script:scanTimer,$script:runTimer,$script:opTimer)) { if ($t) { $t.Stop() } }
-    if ($script:bg) { try { $script:bg.Ps.Stop(); $script:bg.Ps.Dispose() } catch { } }
-    $script:targetCred = $null
+    foreach ($t in @($script:scanTimer,$script:runTimer)) { if ($t) { $t.Stop() } }
 })
 [void]$f.ShowDialog()

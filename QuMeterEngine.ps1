@@ -1,7 +1,7 @@
-# QuMeterEngine.ps1 - headless QuMeter Auto run (used by the scheduled task, "Run once now", and deployed instances).
-# SNMP pull -> dated general CSV + e-automate CSV (+ optional MPS CSV) -> daily log + signed status.json.
+# QuMeterEngine.ps1 - headless QuMeter Auto run (used by the scheduled task and "Run once now").
+# SNMP pull -> dated general CSV + e-automate CSV (+ optional MPS CSV) -> daily log + status.json.
 # File output only: never writes to the e-automate database and never calls an e-automate or MPS API.
-# Exit codes: 0 = success, 1 = failed, 2 = completed with errors, 3 = run request rejected (API key).
+# Exit codes: 0 = success, 1 = failed, 2 = completed with errors.
 [CmdletBinding()]
 param(
     [string]$ConfigPath,
@@ -20,12 +20,11 @@ if (-not $root) { $root = $here }
 
 $script:logPath = $null
 $script:statusFolder = Join-Path $root 'logs'
-$script:apiKey = ''
 $started = Get-Date
 $status = [ordered]@{
     schema   = 1
     instance = [ordered]@{ computer = "$env:COMPUTERNAME"; installDir = $here; configPath = $ConfigPath; user = $(try { [Security.Principal.WindowsIdentity]::GetCurrent().Name } catch { "$env:USER" }); version = (Get-QmVersion) }
-    run      = [ordered]@{ trigger = $Trigger; requestId = $null; startedAt = $started.ToString('yyyy-MM-dd HH:mm:ss'); finishedAt = $null; durationSec = 0; success = $false; partial = $false; exitCode = 1; errorStage = $null; error = $null }
+    run      = [ordered]@{ trigger = $Trigger; startedAt = $started.ToString('yyyy-MM-dd HH:mm:ss'); finishedAt = $null; durationSec = 0; success = $false; partial = $false; exitCode = 1; errorStage = $null; error = $null }
     counts   = [ordered]@{ hosts = 0; ok = 0; withSerial = 0; timeout = 0; error = 0 }
     devices  = @()
     files    = [ordered]@{ general = $null; eautomate = $null; mps = $null; log = $null }
@@ -57,7 +56,7 @@ function Save-Status([int]$Code) {
     $status.run.durationSec = [math]::Round(($end - $started).TotalSeconds, 1)
     $status.run.exitCode = $Code
     $status.files.log = $script:logPath
-    $json = New-QmSignedEnvelope -Object $status -Key $script:apiKey
+    $json = $status | ConvertTo-Json -Depth 8
     foreach ($folder in @($script:statusFolder, (Join-Path $root 'logs')) | Select-Object -Unique) {
         try {
             if (-not (Test-Path -LiteralPath $folder)) { New-Item -ItemType Directory -Path $folder -Force | Out-Null }
@@ -93,22 +92,6 @@ try { if (-not (Test-Path -LiteralPath $logFolder)) { New-Item -ItemType Directo
 catch { $status.warnings += "Log folder not writable ($logFolder): $($_.Exception.Message). Using $root\logs."; $script:statusFolder = Join-Path $root 'logs'; $script:logPath = Join-Path $script:statusFolder ('QuMeter_{0}.log' -f (Get-Date -Format 'yyyyMMdd')) }
 
 Step "QuMeter Auto $(Get-QmVersion) starting on $env:COMPUTERNAME ($Trigger). Config=$ConfigPath"
-
-# ---- API key + run request
-$keyNote = $null
-try { $script:apiKey = Get-QmInstanceApiKey -Dir $here -Note ([ref]$keyNote) } catch { $keyNote = "API key load failed: $($_.Exception.Message)" }
-if ($keyNote) { Log Warn $keyNote; if ($keyNote -match 'could not|failed') { $status.warnings += $keyNote } }
-$reqPath = Join-Path $here 'request.json'
-if (Test-Path -LiteralPath $reqPath) {
-    $reqJson = ''
-    try { $reqJson = [System.IO.File]::ReadAllText($reqPath) } catch { }
-    try { Remove-Item -LiteralPath $reqPath -Force } catch { $status.warnings += "Could not delete request.json: $($_.Exception.Message)" }
-    $rq = Test-QmRunRequest -Json $reqJson -InstanceKey $script:apiKey
-    $status.run.requestId = $rq.RequestId
-    if (-not $rq.Accepted) { Fail 'auth' $rq.Reason 3 }
-    $status.run.trigger = 'remote request'
-    Log Info "Accepted run request $($rq.RequestId)$(if ($script:apiKey) { ' (API key verified)' })."
-}
 
 $problems = Test-QmConfig -Config $cfg -Root $root
 $schedOnly = @($problems | Where-Object { $_ -match '^(Schedule|Frequency|Pick a day|Day of month|Task name)' })

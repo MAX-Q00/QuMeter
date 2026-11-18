@@ -8,7 +8,7 @@ Double-click `QuMeter.bat`. The window has two tabs.
 
 ## Manual tab
 
-Paste IPs, ranges (`10.0.1.1-10.0.1.50` or `10.0.1.1-50`) or CIDR (`10.0.1.0/24`), set the community (default `public`), click **Scan**. A progress bar shows the scan. Check **Exclude IPs that timed out** to hide timeouts in the grid and in every export. Check **Exclude IPs that have no serial number** to hide printers with a blank or placeholder serial (`N/A`, `unknown`, or `0`) from the grid, every export, and the Responding IPs list; the same checkbox is on the Automate Settings tab and is saved in `config.json` (`excludeNoSerial`) for scheduled and deployed Auto runs. After a scan, the **Responding IPs** box lists every address that did not time out (one per line, the same format as the IP input); **Copy** puts that list on the clipboard so you can paste it back and rescan only those printers. The window, tabs, results grid, and text boxes have horizontal and vertical scroll bars.
+Paste IPs, ranges (`10.0.1.1-10.0.1.50` or `10.0.1.1-50`) or CIDR (`10.0.1.0/24`), set the community (default `public`), click **Scan**. A progress bar shows the scan. Check **Exclude IPs that timed out** to hide timeouts in the grid and in every export. Check **Exclude IPs that have no serial number** to hide printers with a blank or placeholder serial (`N/A`, `unknown`, or `0`) from the grid, every export, and the Responding IPs list; the same checkbox is on the Automate Settings tab and is saved in `config.json` (`excludeNoSerial`) for scheduled Auto runs. After a scan, the **Responding IPs** box lists every address that did not time out (one per line, the same format as the IP input); **Copy** puts that list on the clipboard so you can paste it back and rescan only those printers. The window, tabs, results grid, and text boxes have horizontal and vertical scroll bars.
 
 Then export:
 
@@ -16,7 +16,7 @@ Then export:
 - **Export e-automate** (recommended for updating many serials at once): a `.xlsx` workbook laid out like ECI's Meter Import utility (Guide + Import tabs, **Source** on row 3, column headers on row 8, data from row 9). Only printers that answered and reported a serial are included. Matching is by Model + Serial. You can also save a CSV from the same dialog if you want to paste into the official template. The official Import and Export Utility is `.xlsx` only; if it rejects the generated workbook, download official `EA_MeterImport.xlsx`, set **Source** to a meter source in Lists and Codes (not Contract, Service Call or Web), paste our data rows under row 8, and import that file.
 - **Export MPS**: a CSV for an MPS watch folder or manual import. The default layout is `SerialNumber, Model, IPAddress, TotalCount, MonoCount, ColorCount, ReadDate, ReadDateTime, SysDescr` (same as the Automate tab). Choose **FMAudit-style CSV** in the save dialog for published FMAudit audit-history headers (`IP Address, Manufacturer, Model, Serial Number, Description, Total Pages, Mono Pages, Color Pages`). Confirm your MPS tool accepts the columns, or map them, then let MPS sync to e-automate if that integration is already set up. A single official public "import this file into ECI MPS" template was not confirmed.
 - **Export all...** writes the Excel workbook, e-automate `.xlsx` and CSV, both MPS CSVs, and the general CSV into one folder.
-- **Remarks**: an editable box on the Manual tab and the Automate Settings tab (default Imported by QuMeter). It is written to the e-automate Remarks column. Leave it empty for a blank field. Optional tokens, replaced per printer: {date} {time} {ip} {serial} {model}. Saved in settings.json and config.json (eaRemarks), so scheduled and deployed QuMeter Auto runs use the same text.
+- **Remarks**: an editable box on the Manual tab and the Automate Settings tab (default Imported by QuMeter). It is written to the e-automate Remarks column. Leave it empty for a blank field. Optional tokens, replaced per printer: {date} {time} {ip} {serial} {model}. Saved in settings.json and config.json (eaRemarks), so scheduled QuMeter Auto runs use the same text.
 - **Export CSV**: the general scan record (date, time, IP, model, serial, meters, status, errors).
 - **Edit mapping...** opens `e-automate.mapping.json` for custom column or meter-type names, or `"format": "advanced"`.
 
@@ -30,39 +30,21 @@ Sub-tabs:
 
 | Sub-tab | What it does |
 | --- | --- |
-| **Settings** | Printer list, community/version/port/timeout/retries/parallelism, output folder, MPS drop folder, log folder, retention days, e-automate format + meter Source + mapping file, and the **API key** (masked, Show, Generate, Copy). Save settings validates and writes `config.json`. |
+| **Settings** | Printer list, community/version/port/timeout/retries/parallelism, output folder, MPS drop folder, log folder, retention days, e-automate format + meter Source + mapping file. Save settings validates and writes `config.json`. |
 | **Schedule (this PC)** | Task name, Daily/Weekly/Monthly, time, weekday or day of month (1-28 or Last), and run as (current user / SYSTEM / service account). Install/Update, Remove, and status (state, last run, result, next run). |
-| **Deploy to server** | Puts QuMeter Auto on another machine (for example the PaperCut server) as a scheduled task that runs with nobody logged on. Deploy/Update, Status, Run once on target, Fetch log, Remove from target, Export deployment package. The status panel shows the last result in green/orange/red, per-printer results and the target's log. |
-| **Tips** | How to use the output, UNC shares, deploy requirements, the API key. |
+| **Tips** | How to use the output, UNC shares, and the Schedule tab. |
 
 ### Engine
 
-`QuMeterEngine.ps1` is the headless run (what QuMeter Auto used to be). It runs from the scheduled task, from Run once now, and on deployed machines:
+`QuMeterEngine.ps1` is the headless run (what QuMeter Auto used to be). It runs from the scheduled task and from Run once now:
 
 ```
 powershell -NoProfile -ExecutionPolicy Bypass -File QuMeterEngine.ps1 -ConfigPath config.json
 ```
 
-Each run writes `QuMeter_<stamp>.csv`, `QuMeter_eautomate_<stamp>.csv`, optional `QuMeter_mps_<stamp>.csv`, `logs\QuMeter_<date>.log`, and `logs\status.json`. Exit codes: 0 ok, 1 failed, 2 completed with errors, 3 run request rejected (API key). Retention deletes old `QuMeter_*` files in the output and log folders, never in the MPS folder.
+Each run writes `QuMeter_<stamp>.csv`, `QuMeter_eautomate_<stamp>.csv`, optional `QuMeter_mps_<stamp>.csv`, `logs\QuMeter_<date>.log`, and `logs\status.json` (last-run details the Automate tab reads). Exit codes: 0 ok, 1 failed, 2 completed with errors. Retention deletes old `QuMeter_*` files in the output and log folders, never in the MPS folder.
 
-### Deploy
-
-1. **WinRM (preferred).** Opens a PowerShell session to the target, copies the engine + `config.json` + mapping to `C:\ProgramData\QuMeter` (configurable), installs the API key, and registers the task with `Register-ScheduledTask` (Task Scheduler XML, so monthly schedules work). It runs as SYSTEM or a service account, reads the task back, and can run it once and show the result.
-2. **Admin share fallback.** Copies over `\\TARGET\C$\ProgramData\QuMeter` (share configurable) with the admin credentials, then runs `schtasks.exe /S TARGET /Create /XML ...`. In this mode, schtasks gets the passwords on its command line, visible to admins on this PC while it runs. WinRM avoids that.
-3. **Export deployment package.** Builds a zip with `Install.bat`, `Install.ps1`, `Uninstall.bat`, `RunOnce.bat` and `README-DEPLOY.txt`. Copy it to the server and run `Install.bat` as administrator.
-
-Credentials come from `Get-Credential`, are held in memory only (Forget login clears them), and are never written to disk. A service-account password goes straight to Task Scheduler.
-
-**Prerequisites:** local admin on the target; WinRM enabled (`Enable-PSRemoting -Force`, TCP 5985, computer name on a domain or IP in TrustedHosts) **or** admin share (TCP 445) + Remote Scheduled Tasks Management firewall rule; from the target, UDP 161 to the printers and write access to the output/MPS folders. Output can be a UNC share. A task running as SYSTEM writes to shares as the computer account (`SERVER$`), so use a service account for UNC output unless that account has rights.
-
-### Status / API key design
-
-- The deployed engine writes `logs\status.json` on every run, even a failed one: run result, error stage (`config`, `targets`, `snmp`, `write`, `auth`), per-printer status/errors, files written, write errors (e.g. UNC denied), warnings, and timestamps.
-- `status.json` is a signed envelope: `payload` (JSON) + `hmac` = HMAC-SHA256(payload, API key). The GUI reads it over WinRM or the admin share and verifies it with its own copy of the key. It reports "verified", "API key mismatch", or "not signed".
-- **Run once on target** writes a signed `request.json` (`action`, `requestId`, UTC timestamp), then starts the task. The engine accepts the request only if the HMAC matches its key and the request is under 60 minutes old. It echoes the `requestId` in `status.json` so the GUI knows the result belongs to its request. A rejected request is reported back as an `auth` error (exit code 3).
-- Connection problems (target unreachable, WinRM/share failures, task missing, task didn't report) are caught and shown in red in the Deploy tab.
-- Key storage: GUI copy in `apikey.user.dat` (DPAPI CurrentUser). Target copy in `apikey.dat` (DPAPI LocalMachine, ACL limited to SYSTEM, Administrators and the run-as account). It is never in `config.json`, logs or status. The admin-share and package paths drop a one-time ACL-locked `apikey.install` that the engine or installer converts to `apikey.dat` and deletes.
-- Transport security still comes from Windows: WinRM/SMB with an admin account. The key proves status authenticity and gates run requests.
+A service-account password is given to Windows Task Scheduler only; it is never written to disk. Output can be a UNC share. A task running as SYSTEM writes to shares as the computer account (`SERVER$`), so use a service account for UNC output unless that account has rights.
 
 ## What it reads
 
@@ -102,9 +84,9 @@ This app never writes to the e-automate database and never calls an e-automate o
 
 ## Files
 
-- `QuMeter.ps1` GUI · `QuMeterEngine.ps1` headless run · `QuMeterCore.ps1` config/schedule/deploy/API key · `QuSnmp.cs`/`QuSnmp.ps1` SNMP + CSV/Excel exports
+- `QuMeter.ps1` GUI · `QuMeterEngine.ps1` headless run · `QuMeterCore.ps1` config/schedule/status · `QuSnmp.cs`/`QuSnmp.ps1` SNMP + CSV/Excel exports
 - `config.json` Automate settings (no secrets) · `settings.json` Manual tab · `e-automate.mapping.json` column mapping
-- `deploy\` package installer templates · `tests\` box tests (`Test-QuSnmp.ps1`, `Test-QuMeterCore.ps1`, SNMP simulator)
+- `tests\` box tests (`Test-QuSnmp.ps1`, `Test-QuMeterCore.ps1`, SNMP simulator)
 
 On first start, if there's no `config.json` and an old `..\QuMeterAuto\config.json` exists, its settings and `devices.txt` are imported.
 
