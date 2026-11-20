@@ -150,7 +150,7 @@ Assert-True (-not ((New-QmTaskXml -Schedule (Get-QmDefaultConfig).schedule -Inst
 Assert-Eq (Get-QmScheduleText @{ frequency='Monthly'; dayOfMonth='Last'; time='06:00' }) 'on the last day of each month at 06:00' 'schedule text'
 
 Write-Host '=== Scripts parse ==='
-foreach ($f in @('QuMeterCore.ps1','QuMeterEngine.ps1','QuMeter.ps1','QuSnmp.ps1','tests/Test-QuMeterCore.ps1','tests/Test-QuSnmp.ps1')) {
+foreach ($f in @('QuMeterCore.ps1','QuMeterEngine.ps1','QuMeter.ps1','QuMeterUpdate.ps1','QuSnmp.ps1','tests/Test-QuMeterCore.ps1','tests/Test-QuSnmp.ps1','tests/Test-QuMeterUpdate.ps1')) {
     $fp = Join-Path $root $f
     if (Test-Path $fp) {
         $tok = $null; $pe = $null
@@ -167,7 +167,7 @@ $sim = Start-Process -FilePath $script:TestPython -ArgumentList @((Join-Path $he
 try {
     $deadline = (Get-Date).AddSeconds(8); while (-not (Test-Path $ready) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 50 }
     $inst = Join-Path $tmp 'inst'; New-Item -ItemType Directory $inst -Force | Out-Null
-    foreach ($f in @('QuSnmp.cs','QuSnmp.ps1','QuMeterCore.ps1','QuMeterEngine.ps1','e-automate.mapping.json')) { Copy-Item (Join-Path $root $f) $inst }
+    foreach ($f in @('QuSnmp.cs','QuSnmp.ps1','QuMeterCore.ps1','QuMeterEngine.ps1','QuMeterUpdate.ps1','e-automate.mapping.json')) { Copy-Item (Join-Path $root $f) $inst }
     $ec = Get-QmDefaultConfig
     $ec.targets = @('127.0.0.1'); $ec.port = $port; $ec.timeoutMs = 800; $ec.retries = 0
     $ec.mpsDropFolder = 'mps'; $ec.retentionDays = 30
