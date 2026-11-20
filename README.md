@@ -11,32 +11,32 @@ Double-click `QuMeter.bat`. The window has two tabs.
 
 ## Manual tab
 
-Paste IPs, ranges (`10.0.1.1-10.0.1.50` or `10.0.1.1-50`) or CIDR (`10.0.1.0/24`), set the community (default `public`), click **Scan**. A progress bar shows the scan. Click **Stop scan** to cancel a running scan: remaining probes stop, results already collected are kept, and addresses not yet probed are marked **Cancelled**. While a scan is running, the pointer uses the Windows busy cursor. Exports warn you that a cancelled scan is incomplete before writing a file. Check **Exclude IPs that timed out** to hide timeouts in the grid and in every export. Check **Exclude IPs that have no serial number** to hide printers with a blank or placeholder serial (`N/A`, `unknown`, or `0`) from the grid, every export, and the Responding IPs list; the same checkbox is on the Automate Settings tab and is saved in `config.json` (`excludeNoSerial`) for scheduled Auto runs. After a scan, the **Responding IPs** box lists every address that did not time out (one per line, the same format as the IP input); **Copy** puts that list on the clipboard so you can paste it back and rescan only those printers. The window, tabs, results grid, and text boxes have horizontal and vertical scroll bars.
+Paste IPs, ranges (`10.0.1.1-10.0.1.50` or `10.0.1.1-50`) or CIDR (`10.0.1.0/24`), set the community (default `public`), click **Scan**. A progress bar shows the scan. Click **Stop scan** to cancel a running scan: remaining probes stop, results already collected are kept, and addresses not yet probed are marked **Cancelled**. While a scan is running, the pointer uses the Windows busy cursor. Exports warn you that a cancelled scan is incomplete before writing a file. Check **Don't show printers that timed out** to hide timeouts in the grid and in every export. Check **Don't show printers with no serial number** to hide printers with a blank or placeholder serial (`N/A`, `unknown`, or `0`) from the grid, every export, and the Responding IPs list; the same checkbox is on the Automate Settings tab and is saved in `config.json` (`excludeNoSerial`) for scheduled Auto runs. **Hide tips** collapses the right-hand Tips pane (the choice is remembered). **About** in the status bar shows the publisher and copyright. Export buttons stay off while a scan is running, and e-automate / MPS exports need at least one printer that answered with a serial number. After a scan, the **Responding IPs** box lists every address that did not time out (one per line, the same format as the IP input); **Copy** puts that list on the clipboard so you can paste it back and rescan only those printers. The window, tabs, results grid, and text boxes have horizontal and vertical scroll bars.
 
-Then export:
+Then export (e-automate is listed first, as recommended):
 
-- **Export Excel**: a `.xlsx` workbook with Results, e-automate, MPS, FMAudit, and import-instruction sheets. No Excel install is required to write the file.
 - **Export e-automate** (recommended for updating many serials at once): a `.xlsx` workbook laid out like ECI's Meter Import utility (Guide + Import tabs, **Source** on row 3, column headers on row 8, data from row 9). Only printers that answered and reported a serial are included. Matching is by Model + Serial. You can also save a CSV from the same dialog if you want to paste into the official template. The official Import and Export Utility is `.xlsx` only; if it rejects the generated workbook, download official `EA_MeterImport.xlsx`, set **Source** to a meter source in Lists and Codes (not Contract, Service Call or Web), paste our data rows under row 8, and import that file.
+- **Export Excel**: a `.xlsx` workbook with Results, e-automate, MPS, FMAudit, and import-instruction sheets. No Excel install is required to write the file.
 - **Export MPS**: a CSV for an MPS watch folder or manual import. The default layout is `SerialNumber, Model, IPAddress, TotalCount, MonoCount, ColorCount, ReadDate, ReadDateTime, SysDescr` (same as the Automate tab). Choose **FMAudit-style CSV** in the save dialog for published FMAudit audit-history headers (`IP Address, Manufacturer, Model, Serial Number, Description, Total Pages, Mono Pages, Color Pages`). Confirm your MPS tool accepts the columns, or map them, then let MPS sync to e-automate if that integration is already set up. A single official public "import this file into ECI MPS" template was not confirmed.
 - **Export all...** writes the Excel workbook, e-automate `.xlsx` and CSV, both MPS CSVs, and the general CSV into one folder.
 - **Remarks**: an editable box on the Manual tab and the Automate Settings tab (default Imported by QuMeter). It is written to the e-automate Remarks column. Leave it empty for a blank field. Optional tokens, replaced per printer: {date} {time} {ip} {serial} {model}. Saved in settings.json and config.json (eaRemarks), so scheduled QuMeter Auto runs use the same text.
-- **Export CSV**: the general scan record (date, time, IP, model, serial, meters, status, errors).
+- **Export results CSV**: the general scan record (date, time, IP, model, serial, meters, status, errors). Save dialogs open in the last export folder.
 - **Edit mapping...** opens `e-automate.mapping.json` for custom column or meter-type names, or `"format": "advanced"`.
 
-The **Tips** panel on the right explains which file to use and how.
+The **Tips** panel on the right explains which file to use and how. It can be hidden and resized.
 
 ## Automate tab
 
 This tab is still in development. A beta banner at the top says **Beta: this tab is still in development. Feedback is welcome.** **Send feedback** opens a pre-filled email to dylan@quspace.studio with the subject `QuMeter feedback (vX.Y.Z)`. **Report on GitHub** opens a new issue at [MAX-Q00/QuMeter](https://github.com/MAX-Q00/QuMeter/issues/new).
 
-**Run once now** (big button at the top) runs the full automated method one time with the saved settings, the same as a scheduled run. It does the SNMP pull, writes the dated general, e-automate and optional MPS CSVs, and logs the run. It shows progress, the current step and a live log, plus links to the output folder, MPS folder, last log and last-run details.
+**Run once now** (big button at the top) runs the full automated method one time with the saved settings, the same as a scheduled run. It stays disabled until at least one printer is saved on the Settings tab. It does the SNMP pull, writes the dated general, e-automate and optional MPS CSVs, and logs the run. It shows progress, the current step and a live log, plus links to the output folder, MPS folder, last log and last-run details. Settings show the resolved **Saves to:** path for each folder, and **Save settings** marks unsaved changes with an asterisk.
 
 Sub-tabs:
 
 | Sub-tab | What it does |
 | --- | --- |
 | **Settings** | Printer list, community/version/port/timeout/retries/parallelism, output folder, MPS drop folder, log folder, retention days, e-automate format + meter Source + mapping file. Save settings validates and writes `config.json`. |
-| **Schedule (this PC)** | Task name, Daily/Weekly/Monthly, time, weekday or day of month (1-28 or Last), and run as (current user / SYSTEM / service account). Install/Update, Remove, and status (state, last run, result, next run). |
+| **Schedule (this PC)** | Task name, Daily/Weekly/Monthly, time (this PC, 24-hour), weekday or day of month (1-28 or Last), and run as (current user / SYSTEM / service account). Install/Update, Remove (only when a task exists), and status. **Restart as administrator** appears only when the task would run as SYSTEM or a service account. |
 | **Tips** | How to use the output, UNC shares, and the Schedule tab. |
 
 ### Engine
