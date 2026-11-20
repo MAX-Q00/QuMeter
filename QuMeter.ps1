@@ -113,7 +113,7 @@ function New-Tips($p, $text, $x, $y, $w, $h, $anchor) {
         BackColor = [Drawing.Color]::FromArgb(255, 252, 235); Text = $text; Anchor = $anchor
         DetectUrls = $false; TabStop = $false
     }
-    $t.SelectionTabs = @(240, 520)
+    try { $t.SelectionTabs = [int[]]@(240, 520) } catch { }
     Add-C $p $t | Out-Null
     Format-TipsBox $t
     return $t
@@ -377,9 +377,21 @@ function Apply-TipsVisibility {
 }
 $hideTips.Add_CheckedChanged({ Apply-TipsVisibility; Persist })
 $f.Add_Shown({
-    if ($split.Width -gt 600) { $split.SplitterDistance = [math]::Max(420, [int]($split.Width * 0.68)) }
+    try {
+        if (-not $split.Panel2Collapsed -and $split.Width -gt 700) {
+            $avail = $split.Width - $split.SplitterWidth
+            $want = [math]::Max($split.Panel1MinSize, [int]($split.Width * 0.68))
+            $max = $avail - $split.Panel2MinSize
+            if ($want -gt $max) { $want = $max }
+            if ($want -ge $split.Panel1MinSize) { $split.SplitterDistance = $want }
+        }
+    } catch { }
     Apply-TipsVisibility
-    if ($manualTipsBox) { $manualTipsBox.Size = "$($split.Panel2.ClientSize.Width - 12),$($split.Panel2.ClientSize.Height - 12)" }
+    try {
+        if ($manualTipsBox -and -not $split.Panel2Collapsed) {
+            $manualTipsBox.Size = "$([math]::Max(20, $split.Panel2.ClientSize.Width - 12)),$([math]::Max(20, $split.Panel2.ClientSize.Height - 12))"
+        }
+    } catch { }
 })
 $M.Add_Resize({
     $right = 150
@@ -1145,8 +1157,8 @@ function Show-LocalTask {
             return
         }
         $sStatus.Text = "Task '$($sName.Text)': $($t.State)`r`nRun as: $($t.RunAs)`r`nLast run: $($t.LastRunTime)   Result: $($t.LastResult)`r`nNext run: $($t.NextRunTime)"
-        $st = Read-LocalStatus
-        if ($st) { $sStatus.Text += "`r`n`r`n" + (ConvertTo-QmStatusText $st) }
+        $lastRun = Read-LocalStatus
+        if ($lastRun) { $sStatus.Text += "`r`n`r`n" + (ConvertTo-QmStatusText $lastRun) }
     } catch { $sStatus.Text = "Could not read task: $($_.Exception.Message)"; $sRemove.Enabled = $false }
 }
 $sRefresh.Add_Click({ Show-LocalTask })
