@@ -203,34 +203,35 @@ $top = Add-C $left (New-Object Windows.Forms.Panel -Property @{ Dock = 'Top'; He
 $bottom = Add-C $left (New-Object Windows.Forms.Panel -Property @{ Dock = 'Bottom'; Height = 78 })
 $M = $top
 
+$scanCol = Add-C $M (New-Object Windows.Forms.Panel -Property @{ Dock = 'Right'; Width = 150 })
 $lblCommunity = New-L $M '&Community' 10 13
-$community = New-T $M 90 10 80 $(if ($saved.community) { $saved.community } else { 'public' })
+$community = New-T $M 78 10 70 $(if ($saved.community) { $saved.community } else { 'public' })
 Set-Acc $community 'Community'
-$lblVer = New-L $M '&SNMP version' 180 13
-$ver = New-Cb $M 275 10 60 @('v2c','v1') $(if ($saved.version) { $saved.version } else { 'v2c' })
+$lblVer = New-L $M '&SNMP' 156 13
+$ver = New-Cb $M 196 10 52 @('v2c','v1') $(if ($saved.version) { $saved.version } else { 'v2c' })
 Set-Acc $ver 'SNMP version'
-$lblPort = New-L $M '&Port' 345 13
-$port = New-N $M 380 10 55 1 65535 $(if ($saved.port) { $saved.port } else { 161 })
+$lblPort = New-L $M '&Port' 256 13
+$port = New-N $M 288 10 50 1 65535 $(if ($saved.port) { $saved.port } else { 161 })
 Set-Acc $port 'Port'
-$lblTimeout = New-L $M '&Timeout (ms)' 445 13
-$timeout = New-N $M 535 10 65 100 30000 $(if ($saved.timeoutMs) { $saved.timeoutMs } else { 1500 }) 100
+$lblTimeout = New-L $M '&Timeout (ms)' 346 13
+$timeout = New-N $M 430 10 58 100 30000 $(if ($saved.timeoutMs) { $saved.timeoutMs } else { 1500 }) 100
 Set-Acc $timeout 'Timeout (ms)'
-$lblRetries = New-L $M '&Retries' 610 13
-$retries = New-N $M 665 10 45 0 8 $(if ($null -ne $saved.retries) { $saved.retries } else { 1 })
+$lblRetries = New-L $M '&Retries' 496 13
+$retries = New-N $M 544 10 40 0 8 $(if ($null -ne $saved.retries) { $saved.retries } else { 1 })
 Set-Acc $retries 'Retries'
 $savedConc = 32
 if ($saved -and ($saved.PSObject.Properties.Name -contains 'concurrency') -and $saved.concurrency) { $savedConc = $saved.concurrency }
-$lblConc = New-L $M 'P&arallel' 540 13
-$concurrency = New-N $M 610 10 60 1 64 $savedConc
+$lblConc = New-L $scanCol 'P&arallel' 8 10
+$concurrency = New-N $scanCol 68 8 70 1 64 $savedConc
 Set-Acc $concurrency 'Parallel queries'
 
 New-L $M 'Printer &IPs, ranges, or CIDR (one per line or comma-separated)' 10 42 | Out-Null
 $targets = Add-C $M (New-Object Windows.Forms.TextBox -Property @{ Location = '10,62'; Size = '520,90'; Multiline = $true; ScrollBars = 'Both'; WordWrap = $false; AcceptsReturn = $true; Font = $fontMono })
 Set-Acc $targets 'Printer IPs, ranges, or CIDR'
 if ($saved.targets) { $targets.Text = $saved.targets }
-$load = New-B $M '&Load list...' 540 62 130 28
+$load = New-B $scanCol '&Load list...' 10 62 130 28
 Set-Acc $load 'Load list'
-$scan = New-B $M '&Scan' 540 94 130 36
+$scan = New-B $scanCol '&Scan' 10 94 130 36
 $scan.Font = $fontBold
 $scan.BackColor = [Drawing.Color]::FromArgb(25, 135, 84)
 $scan.ForeColor = [Drawing.Color]::White
@@ -238,7 +239,7 @@ $scan.FlatStyle = 'Flat'
 $scan.FlatAppearance.BorderSize = 0
 $scan.UseVisualStyleBackColor = $false
 Set-Acc $scan 'Scan'
-$scanCancel = New-B $M 'S&top scan' 540 94 130 36
+$scanCancel = New-B $scanCol 'S&top scan' 10 94 130 36
 $scanCancel.Font = $fontBold
 $scanCancel.BackColor = [Drawing.Color]::FromArgb(146, 64, 14)
 $scanCancel.ForeColor = [Drawing.Color]::White
@@ -247,9 +248,9 @@ $scanCancel.FlatAppearance.BorderSize = 0
 $scanCancel.UseVisualStyleBackColor = $false
 $scanCancel.Visible = $false
 Set-Acc $scanCancel 'Stop scan'
-$scanBar = Add-C $M (New-Object Windows.Forms.ProgressBar -Property @{ Location = '540,136'; Size = '80,18' })
+$scanBar = Add-C $scanCol (New-Object Windows.Forms.ProgressBar -Property @{ Location = '10,136'; Size = '80,18' })
 Set-Acc $scanBar 'Scan progress'
-$scanCount = New-L $M '' 626 136
+$scanCount = New-L $scanCol '' 94 136
 $scanCount.AutoSize = $true
 Set-Acc $scanCount 'Addresses checked'
 $f.AcceptButton = $scan
@@ -260,7 +261,7 @@ if ($saved -and ($saved.PSObject.Properties.Name -contains 'remarks')) { $initia
 $lblRemarks = New-L $M '&Meter remarks' 10 163
 $remarks = New-T $M 110 160 420 $initialRemarks
 Set-Acc $remarks 'Meter remarks'
-$editMap = New-B $M '&Edit mapping...' 540 158 130 26
+$editMap = New-B $scanCol '&Edit mapping...' 10 158 130 26
 Set-Acc $editMap 'Edit mapping'
 
 $excludeTo = Add-C $M (New-Object Windows.Forms.CheckBox -Property @{ Text = "Don't show printers that timed out in the grid or in exports"; Location = '10,190'; AutoSize = $true })
@@ -275,7 +276,7 @@ if ($saved -and ($saved.PSObject.Properties.Name -contains 'excludeNoSerial') -a
 New-L $M 'Responding IPs (did not time out) - copy this list to rescan only those printers:' 10 234 | Out-Null
 $responded = Add-C $M (New-Object Windows.Forms.TextBox -Property @{ Location = '10,252'; Size = '520,54'; Multiline = $true; ReadOnly = $true; ScrollBars = 'Both'; WordWrap = $false; Font = $fontMono; BackColor = 'White' })
 Set-Acc $responded 'Responding IPs'
-$copyIps = New-B $M '&Copy' 540 252 130 28
+$copyIps = New-B $scanCol '&Copy' 10 252 130 28
 Set-Acc $copyIps 'Copy responding IPs'
 
 foreach ($col in @('IP','Model','Serial','Total','Mono','Color','Status','SysDescr','Error')) {
@@ -394,22 +395,10 @@ $f.Add_Shown({
     } catch { }
 })
 $M.Add_Resize({
-    $right = 150
-    $fieldW = [math]::Max(220, $M.ClientSize.Width - $right - 20)
+    $fieldW = [math]::Max(220, $M.ClientSize.Width - $scanCol.Width - 20)
     $targets.Width = $fieldW
     $responded.Width = $fieldW
     $remarks.Width = [math]::Max(160, $fieldW - 100)
-    $load.Left = $fieldW + 20
-    $scan.Left = $load.Left
-    $scanCancel.Left = $load.Left
-    $scanBar.Left = $load.Left
-    $scanBar.Width = 80
-    $scanCount.Left = $load.Left + 86
-    $editMap.Left = $load.Left
-    $copyIps.Left = $load.Left
-    $lblConc.Left = $load.Left
-    $concurrency.Left = $load.Left + 70
-    $load.Width = 130
 })
 
 $script:scanJob = $null
