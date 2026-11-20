@@ -1,5 +1,8 @@
 # QuMeter
 
+**Published by QuSpace Studios LLC**  
+© 2026 QuSpace Studios LLC
+
 Windows app that reads lifetime meters from networked printers over SNMP (v1/v2c) and writes Excel, CSV, e-automate meter-import, and MPS meter-import files. PowerShell 5.1 + WinForms, nothing to install. Built for HP fleets, but it uses the standard Printer-MIB OIDs, so other brands usually return at least serial + total.
 
 QuMeter now includes **QuMeter Auto** (the old [QuMeterAuto](https://github.com/MAX-Q00/QuMeterAuto) repo is archived).
@@ -91,3 +94,7 @@ This app never writes to the e-automate database and never calls an e-automate o
 On first start, if there's no `config.json` and an old `..\QuMeterAuto\config.json` exists, its settings and `devices.txt` are imported.
 
 This app never writes to the e-automate database and never calls an e-automate or MPS API.
+
+---
+
+Published by QuSpace Studios LLC. © 2026 QuSpace Studios LLC.

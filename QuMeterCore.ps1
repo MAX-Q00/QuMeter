@@ -1,5 +1,7 @@
 # QuMeterCore.ps1 - shared automation logic for QuMeter (GUI Automate tab, headless engine).
 # Windows PowerShell 5.1 compatible. No third-party modules.
+# Published by QuSpace Studios LLC
+# (c) 2026 QuSpace Studios LLC
 $script:QmCoreRoot = $PSScriptRoot
 if (-not $script:QmCoreRoot) { $script:QmCoreRoot = Split-Path -Parent $MyInvocation.MyCommand.Path }
 $script:QmVersion = '2.1.2'

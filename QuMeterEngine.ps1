@@ -2,6 +2,8 @@
 # SNMP pull -> dated general CSV + e-automate CSV (+ optional MPS CSV) -> daily log + status.json.
 # File output only: never writes to the e-automate database and never calls an e-automate or MPS API.
 # Exit codes: 0 = success, 1 = failed, 2 = completed with errors.
+# Published by QuSpace Studios LLC
+# (c) 2026 QuSpace Studios LLC
 [CmdletBinding()]
 param(
     [string]$ConfigPath,

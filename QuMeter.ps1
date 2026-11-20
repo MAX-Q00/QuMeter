@@ -1,4 +1,6 @@
 # QuMeter - SNMP lifetime meter puller with Manual and Automate tabs (PowerShell 5.1 + WinForms, no install).
+# Published by QuSpace Studios LLC
+# (c) 2026 QuSpace Studios LLC
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing
 $app = $PSScriptRoot
@@ -59,12 +61,24 @@ function Browse-Folder($box) {
 }
 function Test-IsAdmin { ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator) }
 
-$f = New-Object Windows.Forms.Form -Property @{ Text = "QuMeter $(Get-QmVersion)"; Size = '1100,820'; MinimumSize = '900,640'; StartPosition = 'CenterScreen'; Font = New-Object Drawing.Font('Segoe UI', 9) }
+$qmPublisher = 'Published by QuSpace Studios LLC'
+$qmCopyright = ('{0} 2026 QuSpace Studios LLC' -f [char]0x00A9)
+$f = New-Object Windows.Forms.Form -Property @{ Text = "QuMeter $(Get-QmVersion) - QuSpace Studios LLC"; Size = '1100,820'; MinimumSize = '900,640'; StartPosition = 'CenterScreen'; Font = New-Object Drawing.Font('Segoe UI', 9) }
 $tabs = New-Object Windows.Forms.TabControl -Property @{ Dock = 'Fill' }
 $tabManual = New-Object Windows.Forms.TabPage -Property @{ Text = 'Manual'; Padding = '6,6,6,6'; AutoScroll = $true; AutoScrollMinSize = New-Object Drawing.Size(1040, 720) }
 $tabAuto   = New-Object Windows.Forms.TabPage -Property @{ Text = 'Automate'; Padding = '6,6,6,6'; AutoScroll = $true; AutoScrollMinSize = New-Object Drawing.Size(1040, 640) }
 [void]$tabs.TabPages.Add($tabManual); [void]$tabs.TabPages.Add($tabAuto)
 $f.Controls.Add($tabs)
+$pubBar = New-Object Windows.Forms.StatusStrip
+$pubLeft = New-Object Windows.Forms.ToolStripStatusLabel
+$pubLeft.Text = $qmPublisher
+$pubLeft.Spring = $true
+$pubLeft.TextAlign = [Drawing.ContentAlignment]::MiddleLeft
+$pubRight = New-Object Windows.Forms.ToolStripStatusLabel
+$pubRight.Text = $qmCopyright
+[void]$pubBar.Items.Add($pubLeft)
+[void]$pubBar.Items.Add($pubRight)
+$f.Controls.Add($pubBar)
 
 # ================================================================== MANUAL TAB
 $scrollHost = Add-C $tabManual (New-Object Windows.Forms.Panel -Property @{ Dock = 'Fill'; AutoScroll = $true; AutoScrollMinSize = New-Object Drawing.Size(1040, 720) })

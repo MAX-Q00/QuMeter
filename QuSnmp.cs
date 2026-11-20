@@ -1,5 +1,7 @@
 // QuSnmp.cs — SNMPv1/v2c over UDP for QuMeter / QuMeter Auto.
 // C# 5 compatible (Windows PowerShell 5.1 Add-Type).
+// Published by QuSpace Studios LLC
+// © 2026 QuSpace Studios LLC
 using System;
 using System.Collections.Generic;
 using System.Globalization;
