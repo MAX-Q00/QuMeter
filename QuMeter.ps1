@@ -179,9 +179,16 @@ $pubAbout.Add_Click({ Show-About })
 $script:hideTips = [bool]($saved -and ($saved.PSObject.Properties.Name -contains 'hideTips') -and $saved.hideTips)
 $script:lastExportFolder = $null
 if ($saved -and ($saved.PSObject.Properties.Name -contains 'lastExportFolder') -and $saved.lastExportFolder) { $script:lastExportFolder = [string]$saved.lastExportFolder }
-$split = Add-C $tabManual (New-Object Windows.Forms.SplitContainer -Property @{
-    Dock = 'Fill'; Orientation = 'Vertical'; SplitterWidth = 6; Panel2MinSize = 160; Panel1MinSize = 420
-})
+$split = New-Object Windows.Forms.SplitContainer
+$split.Width = 1000
+$split.Height = 700
+$split.Dock = 'Fill'
+$split.Orientation = 'Vertical'
+$split.SplitterWidth = 6
+# Min sizes must be set after the control is wide enough (default Width is 150).
+$split.Panel1MinSize = 200
+$split.Panel2MinSize = 160
+[void]$tabManual.Controls.Add($split)
 $left = $split.Panel1
 $Mhost = $left
 $grid = Add-C $left (New-Object Windows.Forms.DataGridView -Property @{
