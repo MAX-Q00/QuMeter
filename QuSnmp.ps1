@@ -338,7 +338,7 @@ function Get-QuMeterRespondedIpText {
     $seen = @{}
     foreach ($r in @($Readings)) {
         if ($null -eq $r) { continue }
-        if ("$($r.Status)" -eq 'Timeout') { continue }
+        if ("$($r.Status)" -eq 'Timeout' -or "$($r.Status)" -eq 'Cancelled') { continue }
         if ($ExcludeNoSerial -and -not (Test-QuMeterHasSerial $r)) { continue }
         $ip = [string]$r.Ip
         if ([string]::IsNullOrWhiteSpace($ip)) { continue }

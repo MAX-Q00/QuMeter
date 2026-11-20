@@ -183,6 +183,11 @@ Assert-True ($ipText -match '10\.0\.0\.9') 'responding list includes OK IP'
 Assert-True ($ipText -match '10\.0\.0\.11') 'responding list includes Error IP (did not time out)'
 Assert-True ($ipText -notmatch '10\.0\.0\.10') 'responding list omits timed-out IP'
 Assert-True ($ipText -match "`r`n" -or $ipText -match "`n") 'responding list is one IP per line'
+$can = New-Object QuMeterSnmp.PrinterReading
+$can.Ip='10.0.0.13'; $can.Status='Cancelled'; $can.ErrorMessage='Scan cancelled.'; $can.ReadAt = Get-Date
+$ipCancel = Get-QuMeterRespondedIpText -Readings @($ok, $to, $err, $lead, $can)
+Assert-True ($ipCancel -match '10\.0\.0\.9') 'responding list still includes OK IP when a row is Cancelled'
+Assert-True ($ipCancel -notmatch '10\.0\.0\.13') 'responding list omits Cancelled IP'
 Assert-Eq (Get-QuMeterManufacturer $ok) 'HP' 'manufacturer from HP sysDescr'
 Assert-Eq (Get-QuMeterManufacturer $lead) 'Xerox' 'manufacturer from Xerox sysDescr'
 
@@ -359,6 +364,12 @@ finally {
 
 Write-Host '=== Manual scan cancel ==='
 $cCancel = New-QuSnmpClient -Community 'public' -Port 1 -TimeoutMs 2000 -Retries 0 -Version 'v2c'
+$already = New-Object QuMeterSnmp.ScanCancel
+$already.Cancel()
+$cCancel.Cancel = $already
+$pre = [QuMeterSnmp.PrinterQuery]::Query($cCancel, '127.0.0.1')
+Assert-Eq $pre.Status 'Cancelled' 'Query with a cancelled token is Cancelled, not Timeout or OK'
+$cCancel.Cancel = $null
 $hosts = @('127.0.0.1','127.0.0.2','127.0.0.3','127.0.0.4','127.0.0.5','127.0.0.6','127.0.0.7','127.0.0.8','127.0.0.9','127.0.0.10')
 $tok = New-Object QuMeterSnmp.ScanCancel
 $tok.Cancel()

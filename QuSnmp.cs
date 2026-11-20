@@ -1003,8 +1003,13 @@ namespace QuMeterSnmp
                     {
                         throw;
                     }
+                    catch (OperationCanceledException)
+                    {
+                        throw;
+                    }
                     catch
                     {
+                        ThrowIfCancelled(client);
                         resp = GetOneByOne(client, host, first);
                     }
                 }
@@ -1152,10 +1157,25 @@ namespace QuMeterSnmp
                     }
                 }
             }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
             catch
             {
+                ThrowIfCancelled(client);
                 // Walks are best-effort fallbacks; leave the field blank.
             }
+        }
+
+        private static bool IsCancelRequested(SnmpClient client)
+        {
+            return client != null && client.Cancel != null && client.Cancel.IsCancellationRequested;
+        }
+
+        private static void ThrowIfCancelled(SnmpClient client)
+        {
+            if (IsCancelRequested(client)) throw new OperationCanceledException("Scan cancelled.");
         }
 
         private static SnmpResponse GetOneByOne(SnmpClient client, string host, string[] oids)
@@ -1163,20 +1183,28 @@ namespace QuMeterSnmp
             SnmpResponse combined = new SnmpResponse();
             for (int i = 0; i < oids.Length; i++)
             {
+                ThrowIfCancelled(client);
                 try
                 {
                     SnmpResponse one = client.Get(host, oids[i]);
                     if (one.Variables.Count > 0) combined.Variables.Add(one.Variables[0]);
                 }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
                 catch (TimeoutException)
                 {
+                    ThrowIfCancelled(client);
                     if (combined.Variables.Count == 0) throw;
                 }
                 catch
                 {
+                    ThrowIfCancelled(client);
                     // Skip this OID; leave its field blank.
                 }
             }
+            ThrowIfCancelled(client);
             if (combined.Variables.Count == 0)
                 throw new TimeoutException("SNMP timeout contacting " + host);
             return combined;
