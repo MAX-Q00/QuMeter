@@ -176,7 +176,7 @@ $pubBrand.Add_Click({ Show-About })
 $pubAbout.Add_Click({ Show-About })
 
 # ================================================================== MANUAL TAB
-$script:hideTips = [bool]($saved -and ($saved.PSObject.Properties.Name -contains 'hideTips') -and $saved.hideTips)
+$script:hideTipsPref = [bool]($saved -and ($saved.PSObject.Properties.Name -contains 'hideTips') -and $saved.hideTips)
 $script:lastExportFolder = $null
 if ($saved -and ($saved.PSObject.Properties.Name -contains 'lastExportFolder') -and $saved.lastExportFolder) { $script:lastExportFolder = [string]$saved.lastExportFolder }
 $split = New-Object Windows.Forms.SplitContainer
@@ -309,7 +309,7 @@ Set-Acc $exportXlsx 'Export Excel'
 Set-Acc $exportCsv 'Export results CSV'
 Set-Acc $exportAll 'Export all'
 $hideTips = Add-C $bottom (New-Object Windows.Forms.CheckBox -Property @{ Text = '&Hide tips'; AutoSize = $true; Location = '10,44' })
-$hideTips.Checked = [bool]$script:hideTips
+$hideTips.Checked = [bool]$script:hideTipsPref
 Set-Acc $hideTips 'Hide tips'
 $st = New-L $bottom 'Paste printer IPs and click Scan.' 120 44
 $st.AutoSize = $true
@@ -372,7 +372,7 @@ $split.Panel2.Add_Resize({
 })
 function Apply-TipsVisibility {
     $split.Panel2Collapsed = [bool]$hideTips.Checked
-    $script:hideTips = [bool]$hideTips.Checked
+    $script:hideTipsPref = [bool]$hideTips.Checked
     $hideTips.Text = $(if ($hideTips.Checked) { '&Show tips' } else { '&Hide tips' })
 }
 $hideTips.Add_CheckedChanged({ Apply-TipsVisibility; Persist })
