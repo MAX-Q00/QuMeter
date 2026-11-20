@@ -1,5 +1,7 @@
 // QuSnmp.cs — SNMPv1/v2c over UDP for QuMeter / QuMeter Auto.
 // C# 5 compatible (Windows PowerShell 5.1 Add-Type).
+// Published by QuSpace Studios LLC
+// © 2026 QuSpace Studios LLC
 using System;
 using System.Collections.Generic;
 using System.Globalization;
@@ -8,6 +10,12 @@ using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using System.Threading;
+using System.Reflection;
+
+[assembly: AssemblyCompany("QuSpace Studios LLC")]
+[assembly: AssemblyProduct("QuMeter")]
+[assembly: AssemblyTitle("QuMeter SNMP")]
+[assembly: AssemblyCopyright("Copyright © 2026 QuSpace Studios LLC")]
 
 namespace QuMeterSnmp
 {
@@ -521,6 +529,58 @@ namespace QuMeterSnmp
         }
     }
 
+    public class ScanCancel
+    {
+        private readonly object sync = new object();
+        private readonly List<UdpClient> live = new List<UdpClient>();
+        private volatile bool cancelled;
+
+        public bool IsCancellationRequested { get { return cancelled; } }
+
+        public void Cancel()
+        {
+            cancelled = true;
+            UdpClient[] snapshot;
+            lock (sync)
+            {
+                snapshot = live.ToArray();
+                live.Clear();
+            }
+            for (int i = 0; i < snapshot.Length; i++)
+            {
+                try { snapshot[i].Close(); }
+                catch { }
+            }
+        }
+
+        public bool Register(UdpClient udp)
+        {
+            if (udp == null) return false;
+            lock (sync)
+            {
+                if (cancelled)
+                {
+                    try { udp.Close(); }
+                    catch { }
+                    return false;
+                }
+                live.Add(udp);
+                return true;
+            }
+        }
+
+        public void Unregister(UdpClient udp)
+        {
+            if (udp == null) return;
+            lock (sync) { live.Remove(udp); }
+        }
+
+        public void ThrowIfCancellationRequested()
+        {
+            if (cancelled) throw new OperationCanceledException("Scan cancelled.");
+        }
+    }
+
     public class SnmpClient
     {
         private static int _nextId = Environment.TickCount;
@@ -530,6 +590,7 @@ namespace QuMeterSnmp
         public int TimeoutMs = 1500;
         public int Retries = 1;
         public SnmpVersion Version = SnmpVersion.V2c;
+        public ScanCancel Cancel;
 
         public static int NextRequestId()
         {
@@ -589,14 +650,21 @@ namespace QuMeterSnmp
             if (attempts < 1) attempts = 1;
             for (int a = 0; a < attempts; a++)
             {
+                if (this.Cancel != null) this.Cancel.ThrowIfCancellationRequested();
                 try
                 {
-                    byte[] reply = UdpExchange(host, this.Port, packet, this.TimeoutMs);
+                    byte[] reply = UdpExchange(host, this.Port, packet, this.TimeoutMs, this.Cancel);
                     SnmpResponse r = SnmpCodec.ParseResponse(reply);
                     return r;
                 }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
                 catch (Exception ex)
                 {
+                    if (this.Cancel != null && this.Cancel.IsCancellationRequested)
+                        throw new OperationCanceledException("Scan cancelled.", ex);
                     last = ex;
                 }
             }
@@ -605,7 +673,14 @@ namespace QuMeterSnmp
 
         public static byte[] UdpExchange(string host, int port, byte[] packet, int timeoutMs)
         {
+            return UdpExchange(host, port, packet, timeoutMs, null);
+        }
+
+        public static byte[] UdpExchange(string host, int port, byte[] packet, int timeoutMs, ScanCancel cancel)
+        {
+            if (cancel != null) cancel.ThrowIfCancellationRequested();
             IPAddress[] addrs = Dns.GetHostAddresses(host);
+            if (cancel != null) cancel.ThrowIfCancellationRequested();
             IPAddress ip = null;
             for (int i = 0; i < addrs.Length; i++)
             {
@@ -619,8 +694,14 @@ namespace QuMeterSnmp
             if (ip == null) throw new SocketException();
 
             UdpClient udp = new UdpClient();
+            bool registered = false;
             try
             {
+                if (cancel != null)
+                {
+                    registered = cancel.Register(udp);
+                    if (!registered) throw new OperationCanceledException("Scan cancelled.");
+                }
                 udp.Client.ReceiveTimeout = timeoutMs;
                 udp.Client.SendTimeout = timeoutMs;
                 IPEndPoint dest = new IPEndPoint(ip, port);
@@ -628,8 +709,21 @@ namespace QuMeterSnmp
                 IPEndPoint remote = new IPEndPoint(IPAddress.Any, 0);
                 return udp.Receive(ref remote);
             }
+            catch (ObjectDisposedException ex)
+            {
+                if (cancel != null && cancel.IsCancellationRequested)
+                    throw new OperationCanceledException("Scan cancelled.", ex);
+                throw;
+            }
+            catch (SocketException ex)
+            {
+                if (cancel != null && cancel.IsCancellationRequested)
+                    throw new OperationCanceledException("Scan cancelled.", ex);
+                throw;
+            }
             finally
             {
+                if (registered && cancel != null) cancel.Unregister(udp);
                 udp.Close();
             }
         }
@@ -909,8 +1003,13 @@ namespace QuMeterSnmp
                     {
                         throw;
                     }
+                    catch (OperationCanceledException)
+                    {
+                        throw;
+                    }
                     catch
                     {
+                        ThrowIfCancelled(client);
                         resp = GetOneByOne(client, host, first);
                     }
                 }
@@ -993,6 +1092,11 @@ namespace QuMeterSnmp
                     r.Status = "OK";
                 }
             }
+            catch (OperationCanceledException)
+            {
+                r.Status = "Cancelled";
+                r.ErrorMessage = "Scan cancelled.";
+            }
             catch (TimeoutException ex)
             {
                 r.Status = "Timeout";
@@ -1000,8 +1104,16 @@ namespace QuMeterSnmp
             }
             catch (Exception ex)
             {
-                r.Status = "Error";
-                r.ErrorMessage = ex.Message;
+                if (client != null && client.Cancel != null && client.Cancel.IsCancellationRequested)
+                {
+                    r.Status = "Cancelled";
+                    r.ErrorMessage = "Scan cancelled.";
+                }
+                else
+                {
+                    r.Status = "Error";
+                    r.ErrorMessage = ex.Message;
+                }
             }
             return r;
         }
@@ -1045,10 +1157,25 @@ namespace QuMeterSnmp
                     }
                 }
             }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
             catch
             {
+                ThrowIfCancelled(client);
                 // Walks are best-effort fallbacks; leave the field blank.
             }
+        }
+
+        private static bool IsCancelRequested(SnmpClient client)
+        {
+            return client != null && client.Cancel != null && client.Cancel.IsCancellationRequested;
+        }
+
+        private static void ThrowIfCancelled(SnmpClient client)
+        {
+            if (IsCancelRequested(client)) throw new OperationCanceledException("Scan cancelled.");
         }
 
         private static SnmpResponse GetOneByOne(SnmpClient client, string host, string[] oids)
@@ -1056,58 +1183,116 @@ namespace QuMeterSnmp
             SnmpResponse combined = new SnmpResponse();
             for (int i = 0; i < oids.Length; i++)
             {
+                ThrowIfCancelled(client);
                 try
                 {
                     SnmpResponse one = client.Get(host, oids[i]);
                     if (one.Variables.Count > 0) combined.Variables.Add(one.Variables[0]);
                 }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
                 catch (TimeoutException)
                 {
+                    ThrowIfCancelled(client);
                     if (combined.Variables.Count == 0) throw;
                 }
                 catch
                 {
+                    ThrowIfCancelled(client);
                     // Skip this OID; leave its field blank.
                 }
             }
+            ThrowIfCancelled(client);
             if (combined.Variables.Count == 0)
                 throw new TimeoutException("SNMP timeout contacting " + host);
             return combined;
         }
 
+        public static PrinterReading CancelledReading(string host)
+        {
+            PrinterReading r = new PrinterReading();
+            r.Ip = host;
+            r.ReadAt = DateTime.Now;
+            r.Status = "Cancelled";
+            r.ErrorMessage = "Scan cancelled.";
+            return r;
+        }
+
         public static List<PrinterReading> QueryMany(SnmpClient template, IList<string> hosts, int concurrency, Action<int, int, PrinterReading> progress)
+        {
+            return QueryMany(template, hosts, concurrency, progress, null);
+        }
+
+        public static List<PrinterReading> QueryMany(SnmpClient template, IList<string> hosts, int concurrency, Action<int, int, PrinterReading> progress, ScanCancel cancel)
         {
             if (concurrency < 1) concurrency = 1;
             if (concurrency > 64) concurrency = 64;
+            if (hosts.Count == 0) return new List<PrinterReading>();
             PrinterReading[] results = new PrinterReading[hosts.Count];
             int done = 0;
             ThreadPool.SetMinThreads(concurrency, concurrency);
             using (ManualResetEvent finished = new ManualResetEvent(false))
             {
-                if (hosts.Count == 0) return new List<PrinterReading>();
                 int remaining = hosts.Count;
                 Semaphore gate = new Semaphore(concurrency, concurrency);
                 for (int i = 0; i < hosts.Count; i++)
                 {
+                    if (cancel != null && cancel.IsCancellationRequested)
+                    {
+                        int skipped = 0;
+                        for (int j = i; j < hosts.Count; j++)
+                        {
+                            if (results[j] == null) results[j] = CancelledReading(hosts[j]);
+                            skipped++;
+                        }
+                        if (Interlocked.Add(ref remaining, -skipped) <= 0) finished.Set();
+                        break;
+                    }
                     int idx = i;
                     gate.WaitOne();
+                    if (cancel != null && cancel.IsCancellationRequested)
+                    {
+                        gate.Release();
+                        int skipped = 0;
+                        for (int j = i; j < hosts.Count; j++)
+                        {
+                            if (results[j] == null) results[j] = CancelledReading(hosts[j]);
+                            skipped++;
+                        }
+                        if (Interlocked.Add(ref remaining, -skipped) <= 0) finished.Set();
+                        break;
+                    }
                     ThreadPool.QueueUserWorkItem(delegate
                     {
                         try
                         {
-                            SnmpClient c = new SnmpClient();
-                            c.Community = template.Community;
-                            c.Port = template.Port;
-                            c.TimeoutMs = template.TimeoutMs;
-                            c.Retries = template.Retries;
-                            c.Version = template.Version;
-                            PrinterReading reading = Query(c, hosts[idx]);
-                            results[idx] = reading;
-                            int d = Interlocked.Increment(ref done);
-                            if (progress != null)
+                            PrinterReading reading;
+                            if (cancel != null && cancel.IsCancellationRequested)
                             {
-                                try { progress(d, hosts.Count, reading); }
-                                catch { }
+                                reading = CancelledReading(hosts[idx]);
+                            }
+                            else
+                            {
+                                SnmpClient c = new SnmpClient();
+                                c.Community = template.Community;
+                                c.Port = template.Port;
+                                c.TimeoutMs = template.TimeoutMs;
+                                c.Retries = template.Retries;
+                                c.Version = template.Version;
+                                c.Cancel = cancel;
+                                reading = Query(c, hosts[idx]);
+                            }
+                            results[idx] = reading;
+                            if (reading.Status != "Cancelled")
+                            {
+                                int d = Interlocked.Increment(ref done);
+                                if (progress != null)
+                                {
+                                    try { progress(d, hosts.Count, reading); }
+                                    catch { }
+                                }
                             }
                         }
                         finally
@@ -1121,7 +1306,11 @@ namespace QuMeterSnmp
                 gate.Close();
             }
             List<PrinterReading> list = new List<PrinterReading>(results.Length);
-            for (int i = 0; i < results.Length; i++) list.Add(results[i]);
+            for (int i = 0; i < results.Length; i++)
+            {
+                if (results[i] == null) results[i] = CancelledReading(hosts[i]);
+                list.Add(results[i]);
+            }
             return list;
         }
     }
@@ -1131,12 +1320,19 @@ namespace QuMeterSnmp
         private int done;
         private volatile bool completed;
         private Thread worker;
+        private readonly ScanCancel cancel = new ScanCancel();
         public int Total;
         public List<PrinterReading> Results;
         public Exception Error;
 
         public int Done { get { return Interlocked.CompareExchange(ref done, 0, 0); } }
         public bool IsCompleted { get { return completed; } }
+        public bool IsCancelled { get { return cancel.IsCancellationRequested; } }
+
+        public void Cancel()
+        {
+            cancel.Cancel();
+        }
 
         public static ScanJob Start(SnmpClient template, IList<string> hosts, int concurrency)
         {
@@ -1152,7 +1348,7 @@ namespace QuMeterSnmp
                         int cur;
                         do { cur = Interlocked.CompareExchange(ref job.done, 0, 0); if (d <= cur) break; }
                         while (Interlocked.CompareExchange(ref job.done, d, cur) != cur);
-                    });
+                    }, job.cancel);
                 }
                 catch (Exception ex) { job.Error = ex; }
                 finally { job.completed = true; }
@@ -1164,6 +1360,7 @@ namespace QuMeterSnmp
 
         public bool Wait(int milliseconds)
         {
+            if (worker == null) return true;
             return worker.Join(milliseconds);
         }
     }

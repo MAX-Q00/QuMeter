@@ -1,10 +1,30 @@
 # QuMeterCore.ps1 - shared automation logic for QuMeter (GUI Automate tab, headless engine).
 # Windows PowerShell 5.1 compatible. No third-party modules.
+# Published by QuSpace Studios LLC
+# (c) 2026 QuSpace Studios LLC
 $script:QmCoreRoot = $PSScriptRoot
 if (-not $script:QmCoreRoot) { $script:QmCoreRoot = Split-Path -Parent $MyInvocation.MyCommand.Path }
-$script:QmVersion = '2.1.2'
+# Single source of truth for the app version. Bump this before tagging a GitHub release.
+$script:QmVersion = '2.2.0'
+$script:QmPublisher = 'QuSpace Studios LLC'
+$script:QmProductName = 'QuMeter'
+$script:QmCopyrightYear = '2026'
+$script:QmFeedbackEmail = 'dylan@quspace.studio'
+$script:QmGitHubIssuesUrl = 'https://github.com/MAX-Q00/QuMeter/issues/new'
 
 function Get-QmVersion { $script:QmVersion }
+function Get-QmPublisher { $script:QmPublisher }
+function Get-QmProductName { $script:QmProductName }
+function Get-QmCopyrightText {
+    param([switch]$Ascii)
+    if ($Ascii) { return "(c) $($script:QmCopyrightYear) $($script:QmPublisher)" }
+    return ('{0} {1} {2}' -f [char]0x00A9, $script:QmCopyrightYear, $script:QmPublisher)
+}
+function Get-QmFeedbackMailto {
+    $subject = [uri]::EscapeDataString("QuMeter feedback (v$(Get-QmVersion))")
+    return "mailto:$($script:QmFeedbackEmail)?subject=$subject"
+}
+function Get-QmFeedbackIssuesUrl { $script:QmGitHubIssuesUrl }
 function Join-QmWinPath {
     # Join for Windows paths that may not exist on this machine (drive letters on a Linux test host); Join-Path would fail.
     param([Parameter(Mandatory)][string]$Base, [Parameter(Mandatory)][string]$Child)
@@ -255,13 +275,13 @@ function New-QmTaskXml {
             $principal = "<UserId>$(ConvertTo-QmXmlText $UserId)</UserId><LogonType>InteractiveToken</LogonType><RunLevel>LeastPrivilege</RunLevel>"
         }
     }
-    $desc = "QuMeter Auto $script:QmVersion - reads printer lifetime meters over SNMP and writes dated general / e-automate / MPS CSV files. Installed in $InstallDir."
+    $desc = "QuMeter Auto $script:QmVersion, published by $script:QmPublisher - reads printer lifetime meters over SNMP and writes dated general / e-automate / MPS CSV files. Installed in $InstallDir."
     $psExe = '%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe'
     return @"
 <?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
-    <Author>QuMeter</Author>
+    <Author>QuSpace Studios LLC</Author>
     <Description>$(ConvertTo-QmXmlText $desc)</Description>
   </RegistrationInfo>
   <Triggers>
@@ -354,3 +374,7 @@ function Get-QmLocalTaskStatus {
     $i = $t | Get-ScheduledTaskInfo
     return [pscustomobject]@{ Exists = $true; State = "$($t.State)"; LastRunTime = $i.LastRunTime; LastResult = (Format-QmTaskResult $i.LastTaskResult); NextRunTime = $i.NextRunTime; RunAs = "$($t.Principal.UserId)" }
 }
+
+# Update helpers (GitHub Releases check / install). Safe to load in the headless engine; nothing runs on import.
+$script:QmUpdatePath = Join-Path $script:QmCoreRoot 'QuMeterUpdate.ps1'
+if (Test-Path -LiteralPath $script:QmUpdatePath) { . $script:QmUpdatePath }

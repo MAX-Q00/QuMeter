@@ -183,6 +183,11 @@ Assert-True ($ipText -match '10\.0\.0\.9') 'responding list includes OK IP'
 Assert-True ($ipText -match '10\.0\.0\.11') 'responding list includes Error IP (did not time out)'
 Assert-True ($ipText -notmatch '10\.0\.0\.10') 'responding list omits timed-out IP'
 Assert-True ($ipText -match "`r`n" -or $ipText -match "`n") 'responding list is one IP per line'
+$can = New-Object QuMeterSnmp.PrinterReading
+$can.Ip='10.0.0.13'; $can.Status='Cancelled'; $can.ErrorMessage='Scan cancelled.'; $can.ReadAt = Get-Date
+$ipCancel = Get-QuMeterRespondedIpText -Readings @($ok, $to, $err, $lead, $can)
+Assert-True ($ipCancel -match '10\.0\.0\.9') 'responding list still includes OK IP when a row is Cancelled'
+Assert-True ($ipCancel -notmatch '10\.0\.0\.13') 'responding list omits Cancelled IP'
 Assert-Eq (Get-QuMeterManufacturer $ok) 'HP' 'manufacturer from HP sysDescr'
 Assert-Eq (Get-QuMeterManufacturer $lead) 'Xerox' 'manufacturer from Xerox sysDescr'
 
@@ -356,6 +361,41 @@ finally {
         try { if ($proc -and -not $proc.HasExited) { Stop-Process -Id $proc.Id -Force } } catch {}
     }
 }
+
+Write-Host '=== Manual scan cancel ==='
+$cCancel = New-QuSnmpClient -Community 'public' -Port 1 -TimeoutMs 2000 -Retries 0 -Version 'v2c'
+$already = New-Object QuMeterSnmp.ScanCancel
+$already.Cancel()
+$cCancel.Cancel = $already
+$pre = [QuMeterSnmp.PrinterQuery]::Query($cCancel, '127.0.0.1')
+Assert-Eq $pre.Status 'Cancelled' 'Query with a cancelled token is Cancelled, not Timeout or OK'
+$cCancel.Cancel = $null
+$hosts = @('127.0.0.1','127.0.0.2','127.0.0.3','127.0.0.4','127.0.0.5','127.0.0.6','127.0.0.7','127.0.0.8','127.0.0.9','127.0.0.10')
+$tok = New-Object QuMeterSnmp.ScanCancel
+$tok.Cancel()
+$sw = [Diagnostics.Stopwatch]::StartNew()
+$cancelledAll = [QuMeterSnmp.PrinterQuery]::QueryMany($cCancel, [string[]]$hosts, 8, $null, $tok)
+$sw.Stop()
+Assert-Eq $cancelledAll.Count 10 'pre-cancelled QueryMany returns every host'
+Assert-True (@($cancelledAll | Where-Object { $_.Status -eq 'Cancelled' }).Count -eq 10) 'pre-cancelled results are all Cancelled'
+Assert-True ($sw.ElapsedMilliseconds -lt 1500) 'pre-cancelled QueryMany returns promptly'
+
+$job = [QuMeterSnmp.ScanJob]::Start($cCancel, [string[]]($hosts + @('127.0.0.11','127.0.0.12','127.0.0.13','127.0.0.14','127.0.0.15','10.255.255.1','10.255.255.2','10.255.255.3','10.255.255.4','10.255.255.5')), 8)
+Start-Sleep -Milliseconds 50
+$job.Cancel()
+$sw2 = [Diagnostics.Stopwatch]::StartNew()
+$joined = $job.Wait(4000)
+$sw2.Stop()
+Assert-True $joined 'cancelled ScanJob finishes within 4s'
+Assert-True $job.IsCompleted 'cancelled ScanJob reports completed'
+Assert-True $job.IsCancelled 'cancelled ScanJob reports cancelled'
+Assert-True ($null -eq $job.Error) 'cancelled ScanJob has no error'
+Assert-Eq $job.Results.Count 20 'cancelled ScanJob still returns a row per host'
+$finished = @($job.Results | Where-Object { $_.Status -ne 'Cancelled' })
+$pending = @($job.Results | Where-Object { $_.Status -eq 'Cancelled' })
+Assert-True ($pending.Count -ge 1) 'unstarted hosts are marked Cancelled'
+Assert-True (($finished.Count + $pending.Count) -eq 20) 'every host is either finished or Cancelled'
+Assert-True ($sw2.ElapsedMilliseconds -lt 3500) 'cancel does not wait out the remaining probes'
 
 Write-Host ''
 Write-Host "Results: $($script:passed) passed, $($script:failed) failed"

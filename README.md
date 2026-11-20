@@ -1,5 +1,8 @@
 # QuMeter
 
+**Published by QuSpace Studios LLC**  
+© 2026 QuSpace Studios LLC
+
 Windows app that reads lifetime meters from networked printers over SNMP (v1/v2c) and writes Excel, CSV, e-automate meter-import, and MPS meter-import files. PowerShell 5.1 + WinForms, nothing to install. Built for HP fleets, but it uses the standard Printer-MIB OIDs, so other brands usually return at least serial + total.
 
 QuMeter now includes **QuMeter Auto** (the old [QuMeterAuto](https://github.com/MAX-Q00/QuMeterAuto) repo is archived).
@@ -8,7 +11,7 @@ Double-click `QuMeter.bat`. The window has two tabs.
 
 ## Manual tab
 
-Paste IPs, ranges (`10.0.1.1-10.0.1.50` or `10.0.1.1-50`) or CIDR (`10.0.1.0/24`), set the community (default `public`), click **Scan**. A progress bar shows the scan. Check **Exclude IPs that timed out** to hide timeouts in the grid and in every export. Check **Exclude IPs that have no serial number** to hide printers with a blank or placeholder serial (`N/A`, `unknown`, or `0`) from the grid, every export, and the Responding IPs list; the same checkbox is on the Automate Settings tab and is saved in `config.json` (`excludeNoSerial`) for scheduled Auto runs. After a scan, the **Responding IPs** box lists every address that did not time out (one per line, the same format as the IP input); **Copy** puts that list on the clipboard so you can paste it back and rescan only those printers. The window, tabs, results grid, and text boxes have horizontal and vertical scroll bars.
+Paste IPs, ranges (`10.0.1.1-10.0.1.50` or `10.0.1.1-50`) or CIDR (`10.0.1.0/24`), set the community (default `public`), click **Scan**. A progress bar shows the scan. Click **Stop scan** to cancel a running scan: remaining probes stop, results already collected are kept, and addresses not yet probed are marked **Cancelled**. Exports warn you that a cancelled scan is incomplete before writing a file. Check **Exclude IPs that timed out** to hide timeouts in the grid and in every export. Check **Exclude IPs that have no serial number** to hide printers with a blank or placeholder serial (`N/A`, `unknown`, or `0`) from the grid, every export, and the Responding IPs list; the same checkbox is on the Automate Settings tab and is saved in `config.json` (`excludeNoSerial`) for scheduled Auto runs. After a scan, the **Responding IPs** box lists every address that did not time out (one per line, the same format as the IP input); **Copy** puts that list on the clipboard so you can paste it back and rescan only those printers. The window, tabs, results grid, and text boxes have horizontal and vertical scroll bars.
 
 Then export:
 
@@ -23,6 +26,8 @@ Then export:
 The **Tips** panel on the right explains which file to use and how.
 
 ## Automate tab
+
+This tab is still in development. A beta banner at the top says **Beta: this tab is still in development. Feedback is welcome.** **Send feedback** opens a pre-filled email to dylan@quspace.studio with the subject `QuMeter feedback (vX.Y.Z)`. **Report on GitHub** opens a new issue at [MAX-Q00/QuMeter](https://github.com/MAX-Q00/QuMeter/issues/new).
 
 **Run once now** (big button at the top) runs the full automated method one time with the saved settings, the same as a scheduled run. It does the SNMP pull, writes the dated general, e-automate and optional MPS CSVs, and logs the run. It shows progress, the current step and a live log, plus links to the output folder, MPS folder, last log and last-run details.
 
@@ -84,10 +89,43 @@ This app never writes to the e-automate database and never calls an e-automate o
 
 ## Files
 
-- `QuMeter.ps1` GUI · `QuMeterEngine.ps1` headless run · `QuMeterCore.ps1` config/schedule/status · `QuSnmp.cs`/`QuSnmp.ps1` SNMP + CSV/Excel exports
+- `QuMeter.ps1` GUI · `QuMeterEngine.ps1` headless run · `QuMeterCore.ps1` config/schedule/status/version · `QuMeterUpdate.ps1` GitHub Releases updater · `QuSnmp.cs`/`QuSnmp.ps1` SNMP + CSV/Excel exports
 - `config.json` Automate settings (no secrets) · `settings.json` Manual tab · `e-automate.mapping.json` column mapping
-- `tests\` box tests (`Test-QuSnmp.ps1`, `Test-QuMeterCore.ps1`, SNMP simulator)
+- `scripts/New-QuMeterReleasePackage.ps1` builds the release zip the updater expects · `scripts/Install-QuMeterShortcut.ps1` creates or refreshes the Desktop shortcut
+- `tests\` box tests (`Test-QuSnmp.ps1`, `Test-QuMeterCore.ps1`, `Test-QuMeterUpdate.ps1`, SNMP simulator)
 
 On first start, if there's no `config.json` and an old `..\QuMeterAuto\config.json` exists, its settings and `devices.txt` are imported.
 
 This app never writes to the e-automate database and never calls an e-automate or MPS API.
+
+## Updates
+
+The app version lives in one place: `$script:QmVersion` in `QuMeterCore.ps1` (`Get-QmVersion` reads it). Keep that in sync before you tag a release.
+
+On startup, QuMeter checks the latest GitHub Release for [MAX-Q00/QuMeter](https://github.com/MAX-Q00/QuMeter/releases/latest) over HTTPS, unauthenticated, with a short timeout. If the machine is offline or no release exists yet, the check fails silently. If a newer version is published, you are asked whether to install it. **Check for updates** on the status bar runs the same check on demand and tells you when you are already current.
+
+If you choose to update, QuMeter downloads the release asset named `QuMeter-X.Y.Z.zip`, checks the size, and checks the SHA256 when the release provides one (GitHub's asset digest, or a `SHA256:` line in the release notes). It then starts a short helper, closes the window (so files are not in use), copies the previous app files into `backup/QuMeter-<old-version>/`, replaces the program files, and relaunches. `settings.json`, `config.json`, `devices.txt`, output, and logs are left alone. An existing `e-automate.mapping.json` is not overwritten.
+
+Until you publish a GitHub Release, startup will not offer an update.
+
+## Publishing a release
+
+Do not publish from this script; it only builds the zip the updater looks for.
+
+1. Bump `$script:QmVersion` in `QuMeterCore.ps1` and commit (this is the only version source of truth).
+2. Merge to `main`.
+3. Create and push an annotated tag that matches that version, for example `v2.2.0`.
+4. On GitHub, draft a new release from that tag.
+5. Run `pwsh -NoProfile -File scripts/New-QuMeterReleasePackage.ps1` and attach the zip it prints, whose name must be `QuMeter-<version>.zip` (files at the zip root, not in a wrapper folder).
+6. Optional: attach the `.sha256` file or paste `SHA256: <hex>` in the release notes. GitHub also publishes an asset digest the updater will use when present.
+7. Publish the release (not as a draft or prerelease). The app reads `/releases/latest`.
+
+## Publisher on Windows
+
+QuMeter is published by **QuSpace Studios LLC**. The window title, status bar, README, source headers, scheduled-task author, and Desktop shortcut description already say so. Windows **Verified publisher** on UAC and SmartScreen only appears on a digitally signed application, which needs a code-signing certificate after Microsoft finishes publisher verification. That is not available yet.
+
+Save dialogs use ordinary file-type filters, for example `CSV (*.csv)`, `Excel workbook (*.xlsx)`, `e-automate workbook (*.xlsx)`, `e-automate CSV (*.csv)`, `MPS CSV (*.csv)`, and `FMAudit-style CSV (*.csv)`.
+
+---
+
+Published by QuSpace Studios LLC. © 2026 QuSpace Studios LLC.

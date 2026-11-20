@@ -1,5 +1,7 @@
 # QuSnmp.ps1 - shared SNMP helpers for QuMeter / QuMeter Auto.
 # Requires Windows PowerShell 5.1 or PowerShell 7. Loads QuSnmp.cs from this folder.
+# Published by QuSpace Studios LLC
+# (c) 2026 QuSpace Studios LLC
 $script:QuSnmpRoot = $PSScriptRoot
 if (-not $script:QuSnmpRoot) { $script:QuSnmpRoot = Split-Path -Parent $MyInvocation.MyCommand.Path }
 
@@ -336,7 +338,7 @@ function Get-QuMeterRespondedIpText {
     $seen = @{}
     foreach ($r in @($Readings)) {
         if ($null -eq $r) { continue }
-        if ("$($r.Status)" -eq 'Timeout') { continue }
+        if ("$($r.Status)" -eq 'Timeout' -or "$($r.Status)" -eq 'Cancelled') { continue }
         if ($ExcludeNoSerial -and -not (Test-QuMeterHasSerial $r)) { continue }
         $ip = [string]$r.Ip
         if ([string]::IsNullOrWhiteSpace($ip)) { continue }

@@ -1,4 +1,6 @@
 # QuMeter - SNMP lifetime meter puller with Manual and Automate tabs (PowerShell 5.1 + WinForms, no install).
+# Published by QuSpace Studios LLC
+# (c) 2026 QuSpace Studios LLC
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing
 $app = $PSScriptRoot
@@ -59,12 +61,27 @@ function Browse-Folder($box) {
 }
 function Test-IsAdmin { ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator) }
 
-$f = New-Object Windows.Forms.Form -Property @{ Text = "QuMeter $(Get-QmVersion)"; Size = '1100,820'; MinimumSize = '900,640'; StartPosition = 'CenterScreen'; Font = New-Object Drawing.Font('Segoe UI', 9) }
+$f = New-Object Windows.Forms.Form -Property @{ Text = "QuMeter $(Get-QmVersion) - $(Get-QmPublisher)"; Size = '1100,820'; MinimumSize = '900,640'; StartPosition = 'CenterScreen'; Font = New-Object Drawing.Font('Segoe UI', 9) }
 $tabs = New-Object Windows.Forms.TabControl -Property @{ Dock = 'Fill' }
 $tabManual = New-Object Windows.Forms.TabPage -Property @{ Text = 'Manual'; Padding = '6,6,6,6'; AutoScroll = $true; AutoScrollMinSize = New-Object Drawing.Size(1040, 720) }
 $tabAuto   = New-Object Windows.Forms.TabPage -Property @{ Text = 'Automate'; Padding = '6,6,6,6'; AutoScroll = $true; AutoScrollMinSize = New-Object Drawing.Size(1040, 640) }
 [void]$tabs.TabPages.Add($tabManual); [void]$tabs.TabPages.Add($tabAuto)
 $f.Controls.Add($tabs)
+$pubBar = New-Object Windows.Forms.StatusStrip
+$pubLeft = New-Object Windows.Forms.ToolStripStatusLabel
+$pubLeft.Text = ('Published by {0}' -f (Get-QmPublisher))
+$pubLeft.Spring = $true
+$pubLeft.TextAlign = [Drawing.ContentAlignment]::MiddleLeft
+$pubUpdate = New-Object Windows.Forms.ToolStripStatusLabel
+$pubUpdate.Text = 'Check for updates'
+$pubUpdate.IsLink = $true
+$pubUpdate.Margin = New-Object Windows.Forms.Padding(12, 3, 12, 3)
+$pubRight = New-Object Windows.Forms.ToolStripStatusLabel
+$pubRight.Text = (Get-QmCopyrightText)
+[void]$pubBar.Items.Add($pubLeft)
+[void]$pubBar.Items.Add($pubUpdate)
+[void]$pubBar.Items.Add($pubRight)
+$f.Controls.Add($pubBar)
 
 # ================================================================== MANUAL TAB
 $scrollHost = Add-C $tabManual (New-Object Windows.Forms.Panel -Property @{ Dock = 'Fill'; AutoScroll = $true; AutoScrollMinSize = New-Object Drawing.Size(1040, 720) })
@@ -98,6 +115,8 @@ if ($saved.targets) { $targets.Text = $saved.targets }
 $load = New-B $M 'Load list...' 540 62 130 28
 $scan = New-B $M 'Scan' 540 94 130 32
 $scan.Font = $fontBold
+$scanCancel = New-B $M 'Stop scan' 540 94 130 32
+$scanCancel.Visible = $false
 $scanBar = Add-C $M (New-Object Windows.Forms.ProgressBar -Property @{ Location = '540,132'; Size = '130,18' })
 
 $initialRemarks = 'Imported by QuMeter'
@@ -169,6 +188,7 @@ Your record of the scan: date, time, IP, model, serial, total, mono, color, stat
 
 Responding IP list
 After a scan, the box above the grid lists every address that did not time out, one per line, in the same format as the IP input. If "Exclude IPs that have no serial number" is checked, addresses with a blank or placeholder serial (N/A, unknown, 0) are omitted too. Click Copy and paste it back into the input to rescan only those printers.
+Click Stop scan to cancel a scan that is still running. Addresses already read are kept; addresses not yet probed are marked Cancelled. Exports warn you if the scan was cancelled, because those results are incomplete.
 
 Exclude IPs that timed out
 When checked, timed-out addresses disappear from the grid and from every export. Printers that answered with an error still appear.
@@ -227,11 +247,19 @@ function Get-ExportMapping {
     return $map
 }
 $script:readings = New-Object System.Collections.Generic.List[QuMeterSnmp.PrinterReading]
+$script:scanWasCancelled = $false
 function Get-CurrentReadings { Get-QuMeterVisibleReadings -Readings @($script:readings) -ExcludeTimedOut $excludeTo.Checked -ExcludeNoSerial $excludeNoSerial.Checked }
 function Prompt-Save([string]$title, [string]$filter, [string]$defaultName) {
     $d = New-Object Windows.Forms.SaveFileDialog -Property @{ Title = $title; Filter = $filter; FileName = $defaultName }
     if ($d.ShowDialog() -eq 'OK') { return $d.FileName }
     return $null
+}
+function Confirm-ExportPartialScan {
+    if (-not $script:scanWasCancelled) { return $true }
+    $cancelled = @($script:readings | Where-Object { $_.Status -eq 'Cancelled' }).Count
+    $finished = $script:readings.Count - $cancelled
+    $total = $script:readings.Count
+    return (Ask "This scan was cancelled after $finished of $total addresses. These results are incomplete. Export them anyway?")
 }
 function Show-ManualResults {
     $grid.Rows.Clear()
@@ -239,13 +267,44 @@ function Show-ManualResults {
     $visible = Get-CurrentReadings
     foreach ($r in $visible) {
         $i = $grid.Rows.Add($r.Ip, $r.Model, $r.Serial, $r.Total, $r.Mono, $r.Color, $r.Status, $r.SysDescr, $r.ErrorMessage)
-        if ($r.Status -ne 'OK') { $grid.Rows[$i].DefaultCellStyle.ForeColor = [Drawing.Color]::Firebrick }
+        if ($r.Status -eq 'Cancelled') { $grid.Rows[$i].DefaultCellStyle.ForeColor = [Drawing.Color]::FromArgb(150, 90, 0) }
+        elseif ($r.Status -ne 'OK') { $grid.Rows[$i].DefaultCellStyle.ForeColor = [Drawing.Color]::Firebrick }
     }
     try { $grid.AutoResizeColumns([Windows.Forms.DataGridViewAutoSizeColumnsMode]::DisplayedCells) } catch { }
     $ok = @($script:readings | Where-Object { $_.Status -eq 'OK' }).Count
     $to = @($script:readings | Where-Object { $_.Status -eq 'Timeout' }).Count
+    $cancelled = @($script:readings | Where-Object { $_.Status -eq 'Cancelled' }).Count
+    $finished = $script:readings.Count - $cancelled
     $shown = @($visible).Count
-    $st.Text = "Done. $ok ok, $to timed out, $($script:readings.Count) total, $shown shown."
+    if ($script:scanWasCancelled) {
+        $st.ForeColor = [Drawing.Color]::FromArgb(150, 90, 0)
+        $st.Text = "Scan cancelled. $ok ok, $to timed out, $finished of $($script:readings.Count) addresses finished, $shown shown."
+    } else {
+        $st.ForeColor = [Drawing.SystemColors]::ControlText
+        $st.Text = "Done. $ok ok, $to timed out, $($script:readings.Count) total, $shown shown."
+    }
+}
+function Set-ScanControlsRunning([bool]$running) {
+    $scan.Visible = -not $running
+    $scan.Enabled = -not $running
+    $scanCancel.Visible = $running
+    $scanCancel.Enabled = $running
+    $load.Enabled = -not $running
+}
+function Complete-ManualScan($j) {
+    $script:scanTimer.Stop()
+    $script:scanJob = $null
+    Set-ScanControlsRunning $false
+    if ($j.Error) {
+        $script:scanWasCancelled = $false
+        $st.ForeColor = [Drawing.Color]::Firebrick
+        $st.Text = "Scan failed: $($j.Error.Message)"
+        return
+    }
+    $script:readings.Clear()
+    if ($j.Results) { foreach ($r in $j.Results) { [void]$script:readings.Add($r) } }
+    $script:scanWasCancelled = [bool]$j.IsCancelled
+    Show-ManualResults
 }
 $excludeTo.Add_CheckedChanged({
     if ($script:readings -and $script:readings.Count -gt 0) { Show-ManualResults }
@@ -267,12 +326,14 @@ $editMap.Add_Click({ Start-Process notepad.exe -ArgumentList "`"$mappingPath`"" 
 $exportCsv.Add_Click({
     $list = Get-CurrentReadings
     if (-not $list -or $list.Count -eq 0) { Msg 'No results to export.'; return }
+    if (-not (Confirm-ExportPartialScan)) { return }
     $path = Prompt-Save 'Export general CSV' 'CSV (*.csv)|*.csv' ("QuMeter_{0}.csv" -f (Get-Date -Format 'yyyyMMdd_HHmmss'))
     if ($path) { Export-QuMeterGeneralCsv -Readings $list -Path $path; $st.Text = "Saved $path" }
 })
 $exportXlsx.Add_Click({
     $list = Get-CurrentReadings
     if (-not $list -or $list.Count -eq 0) { Msg 'No results to export.'; return }
+    if (-not (Confirm-ExportPartialScan)) { return }
     $path = Prompt-Save 'Export Excel workbook' 'Excel workbook (*.xlsx)|*.xlsx' ("QuMeter_{0}.xlsx" -f (Get-Date -Format 'yyyyMMdd_HHmmss'))
     if ($path) {
         Export-QuMeterExcel -Readings $script:readings -Path $path -Mapping (Get-ExportMapping) -ExcludeTimedOut $excludeTo.Checked -ExcludeNoSerial $excludeNoSerial.Checked
@@ -282,6 +343,7 @@ $exportXlsx.Add_Click({
 $exportEa.Add_Click({
     $list = Get-CurrentReadings
     if (-not $list -or $list.Count -eq 0) { Msg 'No results to export.'; return }
+    if (-not (Confirm-ExportPartialScan)) { return }
     $ok = @($list | Where-Object { $_.Status -eq 'OK' -and $_.Serial })
     if ($ok.Count -eq 0) { Msg 'No successful readings with a serial number. e-automate matching is by serial.'; return }
     $path = Prompt-Save 'Export e-automate meter import' 'e-automate workbook (*.xlsx)|*.xlsx|e-automate CSV (*.csv)|*.csv' ("QuMeter_eautomate_{0}.xlsx" -f (Get-Date -Format 'yyyyMMdd_HHmmss'))
@@ -298,6 +360,7 @@ $exportEa.Add_Click({
 $exportMps.Add_Click({
     $list = Get-CurrentReadings
     if (-not $list -or $list.Count -eq 0) { Msg 'No results to export.'; return }
+    if (-not (Confirm-ExportPartialScan)) { return }
     $ok = @($list | Where-Object { $_.Status -eq 'OK' })
     if ($ok.Count -eq 0) { Msg 'No successful readings to put in an MPS file.'; return }
     $d = New-Object Windows.Forms.SaveFileDialog -Property @{
@@ -317,6 +380,7 @@ $exportMps.Add_Click({
 $exportAll.Add_Click({
     $list = Get-CurrentReadings
     if (-not $list -or $list.Count -eq 0) { Msg 'No results to export.'; return }
+    if (-not (Confirm-ExportPartialScan)) { return }
     $d = New-Object Windows.Forms.FolderBrowserDialog -Property @{ Description = 'Choose a folder for the Excel, e-automate, and MPS export files' }
     if ($d.ShowDialog() -ne 'OK') { return }
     $stamp = Get-Date -Format 'yyyyMMdd_HHmmss'
@@ -336,23 +400,34 @@ $scan.Add_Click({
     if ($hosts.Count -eq 0) { Msg 'Enter at least one IP, range, or CIDR.'; return }
     if ($hosts.Count -gt 256 -and -not (Ask "This expands to $($hosts.Count) addresses. Scan anyway?")) { return }
     $grid.Rows.Clear(); $script:readings.Clear(); $responded.Text = ''
+    $script:scanWasCancelled = $false
+    $st.ForeColor = [Drawing.SystemColors]::ControlText
     $client = New-QuSnmpClient -Community $community.Text.Trim() -Port ([int]$port.Value) -TimeoutMs ([int]$timeout.Value) -Retries ([int]$retries.Value) -Version $ver.SelectedItem.ToString()
     $scanBar.Maximum = [math]::Max(1, $hosts.Count); $scanBar.Value = 0
-    $scan.Enabled = $false
     $script:scanJob = [QuMeterSnmp.ScanJob]::Start($client, [string[]]$hosts, 32)
+    Set-ScanControlsRunning $true
     $st.Text = "Scanning 0 / $($hosts.Count)..."
     $script:scanTimer.Start()
+})
+$scanCancel.Add_Click({
+    $j = $script:scanJob
+    if (-not $j -or $j.IsCompleted) { return }
+    $scanCancel.Enabled = $false
+    $st.ForeColor = [Drawing.Color]::FromArgb(150, 90, 0)
+    $st.Text = 'Stopping scan...'
+    $j.Cancel()
 })
 $script:scanTimer = New-Object Windows.Forms.Timer -Property @{ Interval = 200 }
 $script:scanTimer.Add_Tick({
     $j = $script:scanJob
     if (-not $j) { $script:scanTimer.Stop(); return }
     $scanBar.Value = [math]::Min($j.Done, $scanBar.Maximum)
-    if (-not $j.IsCompleted) { $st.Text = "Scanning $($j.Done) / $($j.Total)..."; return }
-    $script:scanTimer.Stop(); $script:scanJob = $null; $scan.Enabled = $true
-    if ($j.Error) { $st.Text = "Scan failed: $($j.Error.Message)"; return }
-    foreach ($r in $j.Results) { [void]$script:readings.Add($r) }
-    Show-ManualResults
+    if (-not $j.IsCompleted) {
+        if ($j.IsCancelled) { $st.Text = "Stopping scan... $($j.Done) / $($j.Total) finished." }
+        else { $st.Text = "Scanning $($j.Done) / $($j.Total)..." }
+        return
+    }
+    Complete-ManualScan $j
 })
 
 # ================================================================== AUTOMATE TAB
@@ -367,6 +442,17 @@ $A.Controls.Add($sub)
 # --- Run once now bar (top)
 $top = New-Object Windows.Forms.Panel -Property @{ Dock = 'Top'; Height = 140; BorderStyle = 'FixedSingle'; BackColor = [Drawing.Color]::FromArgb(240, 247, 255) }
 $A.Controls.Add($top)
+$autoBanner = New-Object Windows.Forms.Panel -Property @{ Dock = 'Top'; Height = 28; BackColor = [Drawing.Color]::FromArgb(255, 248, 230) }
+$autoBannerFlow = New-Object Windows.Forms.FlowLayoutPanel -Property @{ Dock = 'Fill'; WrapContents = $false; Padding = '6,4,6,0' }
+[void]$autoBannerFlow.Controls.Add((New-Object Windows.Forms.Label -Property @{ Text = 'Beta: this tab is still in development. Feedback is welcome.'; AutoSize = $true; Margin = '0,2,12,0'; ForeColor = [Drawing.Color]::FromArgb(90, 70, 20) }))
+$lnkFeedback = New-Object Windows.Forms.LinkLabel -Property @{ Text = 'Send feedback'; AutoSize = $true; Margin = '0,2,12,0'; LinkColor = [Drawing.Color]::FromArgb(0, 102, 184) }
+$lnkGithubIssue = New-Object Windows.Forms.LinkLabel -Property @{ Text = 'Report on GitHub'; AutoSize = $true; Margin = '0,2,0,0'; LinkColor = [Drawing.Color]::FromArgb(0, 102, 184) }
+$lnkFeedback.Add_LinkClicked({ try { Start-Process (Get-QmFeedbackMailto) } catch { Msg $_.Exception.Message 'Error' } })
+$lnkGithubIssue.Add_LinkClicked({ try { Start-Process (Get-QmFeedbackIssuesUrl) } catch { Msg $_.Exception.Message 'Error' } })
+[void]$autoBannerFlow.Controls.Add($lnkFeedback)
+[void]$autoBannerFlow.Controls.Add($lnkGithubIssue)
+$autoBanner.Controls.Add($autoBannerFlow)
+$A.Controls.Add($autoBanner)
 $sub.BringToFront()
 $runOnce = New-B $top 'Run once now' 10 10 180 56
 $runOnce.Font = New-Object Drawing.Font('Segoe UI', 12, [Drawing.FontStyle]::Bold)
@@ -649,8 +735,98 @@ Set-GuiFromConfig $script:cfg
 if ($script:importNote) { $aValid.ForeColor = 'DarkOrange' }
 if (Test-Path -LiteralPath $configPath) { try { Show-LocalResult; if (-not (Read-LocalStatus)) { $runStatus.ForeColor = 'Black'; $runStatus.Text = 'Ready. Save your settings, then click Run once now to test.' } } catch { } }
 Show-LocalTask
+function Stop-QmBackgroundUpdateCheck {
+    foreach ($tm in @($script:updateTimer, $script:updatePoll)) { if ($tm) { try { $tm.Stop() } catch { } } }
+    if ($script:updatePs) {
+        try { $script:updatePs.Stop() } catch { }
+        try { $script:updatePs.Dispose() } catch { }
+        $script:updatePs = $null
+    }
+    if ($script:updateRs) {
+        try { $script:updateRs.Dispose() } catch { }
+        $script:updateRs = $null
+    }
+}
+function Invoke-QmUpdateInstall($rel) {
+    $pubUpdate.Text = ("Downloading QuMeter {0}..." -f $rel.Version)
+    $f.Cursor = 'WaitCursor'
+    try {
+        $null = Install-QmUpdateFromRelease -Release $rel -AppDir $app -WaitPid $PID -Relaunch
+        $pubUpdate.Text = 'Restarting to finish the update...'
+        $f.Close()
+    } catch {
+        $f.Cursor = 'Default'
+        $pubUpdate.Text = 'Check for updates'
+        Msg ("Update failed: {0}" -f $_.Exception.Message) 'Error'
+    }
+}
+function Show-QmUpdatePrompt($rel) {
+    $msg = "QuMeter $($rel.Version) is available (you have $(Get-QmVersion)). Download and install the update from GitHub Releases now?"
+    if (Ask $msg) { Invoke-QmUpdateInstall $rel }
+}
+function Show-QmUpdateCheck {
+    param([switch]$QuietIfCurrent)
+    $pubUpdate.Text = 'Checking for updates...'
+    $cur = Get-QmVersion
+    $rel = $null
+    try { $rel = Get-QmLatestRelease } catch { $rel = $null }
+    $pubUpdate.Text = 'Check for updates'
+    if (-not $rel) {
+        if (-not $QuietIfCurrent) { Msg 'Could not check for updates. Check your internet connection and try again, or confirm a GitHub Release exists.' 'Warning' }
+        return
+    }
+    $cmp = Compare-QmVersion $cur $rel.Version
+    if ($cmp -eq 0) {
+        if (-not $QuietIfCurrent) { Msg "You're on the latest version ($cur)." }
+        return
+    }
+    if ($cmp -gt 0) {
+        if (-not $QuietIfCurrent) { Msg "This build ($cur) is newer than the latest published release ($($rel.Version))." }
+        return
+    }
+    Show-QmUpdatePrompt $rel
+}
+function Start-QmBackgroundUpdateCheck {
+    Stop-QmBackgroundUpdateCheck
+    $script:updateRs = [runspacefactory]::CreateRunspace()
+    $script:updateRs.Open()
+    $script:updatePs = [powershell]::Create()
+    $script:updatePs.Runspace = $script:updateRs
+    [void]$script:updatePs.AddScript('param($Core,$Upd) . $Core; Get-QmLatestRelease').AddArgument((Join-Path $app 'QuMeterCore.ps1')).AddArgument((Join-Path $app 'QuMeterUpdate.ps1'))
+    $script:updateHandle = $script:updatePs.BeginInvoke()
+    $script:updatePoll = New-Object Windows.Forms.Timer -Property @{ Interval = 250 }
+    $script:updatePoll.Add_Tick({
+        if (-not $script:updateHandle -or -not $script:updateHandle.IsCompleted) { return }
+        $script:updatePoll.Stop()
+        $rel = $null
+        try {
+            $out = $script:updatePs.EndInvoke($script:updateHandle)
+            if ($out) { $rel = @($out)[-1] }
+        } catch { $rel = $null }
+        Stop-QmBackgroundUpdateCheck
+        if ($rel -and $rel.Version) {
+            try {
+                if ((Compare-QmVersion (Get-QmVersion) $rel.Version) -lt 0) { Show-QmUpdatePrompt $rel }
+            } catch { }
+        }
+    })
+    $script:updatePoll.Start()
+}
+$pubUpdate.Add_Click({ Show-QmUpdateCheck })
+$f.Add_Shown({
+    $script:updateTimer = New-Object Windows.Forms.Timer -Property @{ Interval = 800 }
+    $script:updateTimer.Add_Tick({
+        $script:updateTimer.Stop()
+        Start-QmBackgroundUpdateCheck
+    })
+    $script:updateTimer.Start()
+})
 $f.Add_FormClosing({
     Persist
-    foreach ($t in @($script:scanTimer,$script:runTimer)) { if ($t) { $t.Stop() } }
+    if ($script:scanJob -and -not $script:scanJob.IsCompleted) {
+        try { $script:scanJob.Cancel(); [void]$script:scanJob.Wait(3000) } catch { }
+    }
+    foreach ($tm in @($script:scanTimer, $script:runTimer, $script:updateTimer, $script:updatePoll)) { if ($tm) { try { $tm.Stop() } catch { } } }
+    Stop-QmBackgroundUpdateCheck
 })
 [void]$f.ShowDialog()
