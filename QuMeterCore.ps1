@@ -5,7 +5,7 @@
 $script:QmCoreRoot = $PSScriptRoot
 if (-not $script:QmCoreRoot) { $script:QmCoreRoot = Split-Path -Parent $MyInvocation.MyCommand.Path }
 # Single source of truth for the app version. Bump this before tagging a GitHub release.
-$script:QmVersion = '2.2.0'
+$script:QmVersion = '2.2.1'
 $script:QmPublisher = 'QuSpace Studios LLC'
 $script:QmProductName = 'QuMeter'
 $script:QmCopyrightYear = '2026'

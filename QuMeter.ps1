@@ -290,6 +290,7 @@ function Set-ScanControlsRunning([bool]$running) {
     $scanCancel.Visible = $running
     $scanCancel.Enabled = $running
     $load.Enabled = -not $running
+    $f.UseWaitCursor = [bool]$running
 }
 function Complete-ManualScan($j) {
     $script:scanTimer.Stop()
