@@ -27,22 +27,57 @@ function Set-Acc($ctl, [string]$name, [string]$desc = '') {
     if ($desc) { $ctl.AccessibleDescription = $desc }
 }
 function Set-ProgressBarState($bar, [string]$state) {
-    if (-not $bar -or $bar.IsDisposed) { return }
+    if (-not $bar) { return }
+    $inner = $bar
+    try {
+        if ($bar -is [Windows.Forms.ToolStripProgressBar]) { $inner = $bar.ProgressBar }
+    } catch { }
+    if (-not $inner -or $inner.IsDisposed) { return }
     try {
         $code = switch ($state) {
             'paused' { [QmNative]::PBST_PAUSED }
             'error'  { [QmNative]::PBST_ERROR }
             default  { [QmNative]::PBST_NORMAL }
         }
-        [void][QmNative]::SendMessage($bar.Handle, [QmNative]::PBM_SETSTATE, [IntPtr]$code, [IntPtr]::Zero)
+        [void][QmNative]::SendMessage($inner.Handle, [QmNative]::PBM_SETSTATE, [IntPtr]$code, [IntPtr]::Zero)
     } catch { }
 }
-function Set-AppStatus([string]$text, $color = $null) {
-    if ($st) {
-        if ($color) { $st.ForeColor = $color } else { $st.ForeColor = [Drawing.SystemColors]::ControlText }
-        $st.Text = $text
+function Set-ScanProgressVisible([bool]$show) {
+    if ($scanBarItem) {
+        $scanBarItem.Visible = [bool]$show
+        if ($pubBar) { try { $pubBar.PerformLayout() } catch { } }
     }
-    if ($pubStatus) { $pubStatus.Text = $text }
+}
+function Set-AppStatus([string]$text, $color = $null, [string]$ForTab = '') {
+    if (-not $color) { $color = [Drawing.SystemColors]::ControlText }
+    if (-not $ForTab) {
+        if ($tabs -and $tabAuto -and $tabs.SelectedTab -eq $tabAuto) { $ForTab = 'auto' } else { $ForTab = 'manual' }
+    }
+    if ($ForTab -eq 'auto') { $script:autoStatusText = $text; $script:autoStatusColor = $color }
+    else { $script:manualStatusText = $text; $script:manualStatusColor = $color }
+    $active = 'manual'
+    if ($tabs -and $tabAuto -and $tabs.SelectedTab -eq $tabAuto) { $active = 'auto' }
+    if ($ForTab -ne $active) { return }
+    Show-StatusStripText $text $color
+}
+function Show-StatusStripText([string]$text, $color = $null) {
+    if (-not $pubStatus) { return }
+    if (-not $color) { $color = [Drawing.SystemColors]::ControlText }
+    $pubStatus.ForeColor = $color
+    $pubStatus.Text = $text
+    $pubStatus.ToolTipText = $text
+    $pubStatus.AutoToolTip = $true
+}
+function Show-ActiveTabStatus {
+    $for = 'manual'
+    if ($tabs -and $tabAuto -and $tabs.SelectedTab -eq $tabAuto) { $for = 'auto' }
+    if ($for -eq 'auto') { $text = $script:autoStatusText; $color = $script:autoStatusColor }
+    else { $text = $script:manualStatusText; $color = $script:manualStatusColor }
+    if (-not $text) {
+        $text = $(if ($for -eq 'auto') { Get-QmRunOnceEmptyCaption } else { 'Paste printer IPs and click Scan.' })
+    }
+    if (-not $color) { $color = [Drawing.SystemColors]::ControlText }
+    Show-StatusStripText $text $color
 }
 
 
@@ -85,19 +120,33 @@ function New-Cb($p, $x, $y, $w, [string[]]$items, $sel) {
     $c.SelectedItem = "$sel"; if ($c.SelectedIndex -lt 0) { $c.SelectedIndex = 0 }
     Add-C $p $c
 }
+function Get-TipsHeadingFont($base) {
+    try { return New-Object Drawing.Font('Segoe UI Semibold', $base.Size) } catch { return New-Object Drawing.Font($base, [Drawing.FontStyle]::Bold) }
+}
 function Format-TipsBox($box) {
     if (-not $box) { return }
     $text = [string]$box.Text
+    $heads = @(
+        'Tips - using the Manual tab','Scan','Import list (MPS)','Customer drop-down',
+        'Recommended: e-automate workbook (Export e-automate)',
+        'Alternative: MPS file, then MPS to e-automate (Export MPS)',
+        'Excel workbook (Export Excel)','General CSV (Export results CSV)',
+        'Responding IP list','Exclude IPs that are timing out',
+        'Only show/include devices that are reporting serial numbers(Usually Only Printers)',
+        'Meter remarks','Custom column names / Advanced format','Scan tips','Tips',
+        'Tips - Automate','This tab is experimental','What it does','Getting meters into e-automate',
+        'Output to a network share','This PC (Schedule tab)','Errors'
+    )
+    $headFont = Get-TipsHeadingFont $box.Font
     $pos = 0
     foreach ($line in ($text -split "`r`n")) {
-        $isHead = $false
-        if ($line) {
-            if ($line -cmatch '^[A-Z0-9 /:,''&.+-]+$') { $isHead = $true }
-            elseif ($line -match '^(RECOMMENDED|ALTERNATIVE|Excel workbook|General CSV|Responding IP list|Custom column)') { $isHead = $true }
-        }
+        $isHead = $heads -contains $line
         if ($isHead) {
             $box.Select($pos, $line.Length)
-            $box.SelectionFont = New-Object Drawing.Font($box.Font, [Drawing.FontStyle]::Bold)
+            $box.SelectionFont = $headFont
+        } elseif ($line -match '^\s+(QuMeter_|logs\\)') {
+            $box.Select($pos, $line.Length)
+            $box.SelectionFont = $fontMono
         }
         $pos += $line.Length + 2
     }
@@ -126,10 +175,10 @@ function Browse-Folder($box) {
 }
 function Test-IsAdmin { ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator) }
 
-$f = New-Object Windows.Forms.Form -Property @{ Text = "QuMeter $(Get-QmVersion)"; Size = '1100,820'; MinimumSize = '900,640'; StartPosition = 'CenterScreen'; Font = New-Object Drawing.Font('Segoe UI', 9) }
+$f = New-Object Windows.Forms.Form -Property @{ Text = "QuMeter $(Get-QmVersion)"; Size = '1100,820'; MinimumSize = '900,640'; StartPosition = 'CenterScreen'; Font = New-Object Drawing.Font('Segoe UI', 9); AutoScaleMode = 'Dpi'; AutoScaleDimensions = New-Object Drawing.SizeF(96, 96) }
 $tabs = New-Object Windows.Forms.TabControl -Property @{ Dock = 'Fill' }
 $tabManual = New-Object Windows.Forms.TabPage -Property @{ Text = 'Manual'; Padding = '6,6,6,6'; AutoScroll = $false }
-$tabAuto   = New-Object Windows.Forms.TabPage -Property @{ Text = 'Automate'; Padding = '6,6,6,6'; AutoScroll = $true; AutoScrollMinSize = New-Object Drawing.Size(1040, 640) }
+$tabAuto   = New-Object Windows.Forms.TabPage -Property @{ Text = (Get-QmAutomateTabText); Padding = '6,6,6,6'; AutoScroll = $true; AutoScrollMinSize = New-Object Drawing.Size(860, 600) }
 [void]$tabs.TabPages.Add($tabManual); [void]$tabs.TabPages.Add($tabAuto)
 $f.Controls.Add($tabs)
 $pubBar = New-Object Windows.Forms.StatusStrip
@@ -137,6 +186,12 @@ $pubStatus = New-Object Windows.Forms.ToolStripStatusLabel
 $pubStatus.Text = 'Paste printer IPs and click Scan.'
 $pubStatus.Spring = $true
 $pubStatus.TextAlign = [Drawing.ContentAlignment]::MiddleLeft
+$pubStatus.AutoToolTip = $true
+$pubStatus.ToolTipText = $pubStatus.Text
+$script:manualStatusText = $pubStatus.Text
+$script:manualStatusColor = [Drawing.SystemColors]::ControlText
+$script:autoStatusText = (Get-QmRunOnceEmptyCaption)
+$script:autoStatusColor = [Drawing.SystemColors]::ControlText
 $pubBrand = New-Object Windows.Forms.ToolStripStatusLabel
 $pubBrand.Text = (Get-QmPublisher)
 $pubBrand.IsLink = $true
@@ -150,7 +205,16 @@ $pubUpdate.Margin = New-Object Windows.Forms.Padding(12, 3, 12, 3)
 $pubAbout = New-Object Windows.Forms.ToolStripStatusLabel
 $pubAbout.Text = 'About'
 $pubAbout.IsLink = $true
+$scanBarItem = New-Object Windows.Forms.ToolStripProgressBar
+$scanBarItem.Name = 'ScanProgress'
+$scanBarItem.AutoSize = $false
+$scanBarItem.Width = 120
+$scanBarItem.Visible = $false
+$scanBarItem.Margin = New-Object Windows.Forms.Padding(6, 3, 6, 3)
+$scanBar = $scanBarItem
+Set-Acc $scanBarItem.ProgressBar 'Scan progress'
 [void]$pubBar.Items.Add($pubStatus)
+[void]$pubBar.Items.Add($scanBarItem)
 [void]$pubBar.Items.Add($pubBrand)
 [void]$pubBar.Items.Add($pubVer)
 [void]$pubBar.Items.Add($pubUpdate)
@@ -159,15 +223,20 @@ $f.Controls.Add($pubBar)
 $uiTip = New-Object Windows.Forms.ToolTip
 $uiTip.ShowAlways = $true
 function Show-About {
-    $d = New-Object Windows.Forms.Form -Property @{ Text = 'About QuMeter'; Size = '420,260'; StartPosition = 'CenterParent'; FormBorderStyle = 'FixedDialog'; MaximizeBox = $false; MinimizeBox = $false; Font = $f.Font }
-    $txt = "QuMeter $(Get-QmVersion)`r`n$(Get-QmPublisher)`r`n$(Get-QmCopyrightText)`r`n`r`nSNMP lifetime meter puller for e-automate and MPS imports."
-    [void]$d.Controls.Add((New-Object Windows.Forms.Label -Property @{ Text = $txt; Location = '16,16'; AutoSize = $true }))
-    $lnk = New-Object Windows.Forms.LinkLabel -Property @{ Text = 'Send feedback'; Location = '16,130'; AutoSize = $true }
+    $d = New-Object Windows.Forms.Form -Property @{ Text = 'About QuMeter'; Size = '420,280'; StartPosition = 'CenterParent'; FormBorderStyle = 'FixedDialog'; MaximizeBox = $false; MinimizeBox = $false; Font = $f.Font }
+    $txt = "QuMeter $(Get-QmVersion)`r`n$(Get-QmCopyrightText)`r`n`r`n$(Get-QmAboutDescription)"
+    [void]$d.Controls.Add((New-Object Windows.Forms.Label -Property @{ Text = $txt; Location = '16,16'; AutoSize = $true; MaximumSize = New-Object Drawing.Size(380, 0) }))
+    $lnk = New-Object Windows.Forms.LinkLabel -Property @{ Text = 'Send feedback'; Location = '16,120'; AutoSize = $true }
+    $lnk.LinkBehavior = 'AlwaysUnderline'
     $lnk.Add_LinkClicked({ try { Start-Process (Get-QmFeedbackMailto) } catch { } })
-    $lnk2 = New-Object Windows.Forms.LinkLabel -Property @{ Text = 'Report on GitHub'; Location = '16,152'; AutoSize = $true }
+    $lnk2 = New-Object Windows.Forms.LinkLabel -Property @{ Text = 'Report on GitHub'; Location = '16,142'; AutoSize = $true }
+    $lnk2.LinkBehavior = 'AlwaysUnderline'
     $lnk2.Add_LinkClicked({ try { Start-Process (Get-QmFeedbackIssuesUrl) } catch { } })
-    $ok = New-Object Windows.Forms.Button -Property @{ Text = 'OK'; Location = '310,180'; Size = '80,28'; DialogResult = 'OK' }
-    $d.Controls.AddRange(@($lnk, $lnk2, $ok))
+    $lnk3 = New-Object Windows.Forms.LinkLabel -Property @{ Text = 'Check for updates'; Location = '16,164'; AutoSize = $true }
+    $lnk3.LinkBehavior = 'AlwaysUnderline'
+    $lnk3.Add_LinkClicked({ $d.Close(); Show-QmUpdateCheck })
+    $ok = New-Object Windows.Forms.Button -Property @{ Text = 'OK'; Location = '310,200'; Size = '80,28'; DialogResult = 'OK' }
+    $d.Controls.AddRange(@($lnk, $lnk2, $lnk3, $ok))
     $d.AcceptButton = $ok
     [void]$d.ShowDialog($f)
     $d.Dispose()
@@ -176,9 +245,21 @@ $pubBrand.Add_Click({ Show-About })
 $pubAbout.Add_Click({ Show-About })
 
 # ================================================================== MANUAL TAB
-$script:hideTipsPref = [bool]($saved -and ($saved.PSObject.Properties.Name -contains 'hideTips') -and $saved.hideTips)
+$script:tipsSeen = [bool]($saved -and ($saved.PSObject.Properties.Name -contains 'tipsSeen') -and $saved.tipsSeen)
+$script:hideTipsPref = Get-QmDefaultHideTips $saved
+$script:userSetTips = $false
+$script:tipsPinnedOpen = $false
 $script:lastExportFolder = $null
 if ($saved -and ($saved.PSObject.Properties.Name -contains 'lastExportFolder') -and $saved.lastExportFolder) { $script:lastExportFolder = [string]$saved.lastExportFolder }
+$script:lastMpsImportFolder = $null
+if ($saved -and ($saved.PSObject.Properties.Name -contains 'lastMpsImportFolder') -and $saved.lastMpsImportFolder) { $script:lastMpsImportFolder = [string]$saved.lastMpsImportFolder }
+$script:mpsImportPath = Get-QmMpsImportPath $app
+$script:mpsImport = $null
+$script:mpsSelectedCustomer = Get-QmMpsIpSearchLabel
+$script:listSource = ''
+$script:updatingCustomerFilter = $false
+$script:updatingTargets = $false
+$script:lastScanReadings = @()
 $split = New-Object Windows.Forms.SplitContainer
 $split.Width = 1000
 $split.Height = 700
@@ -189,57 +270,113 @@ $split.SplitterWidth = 6
 $split.Panel1MinSize = 200
 $split.Panel2MinSize = 160
 [void]$tabManual.Controls.Add($split)
-$left = $split.Panel1
-$Mhost = $left
-$grid = Add-C $left (New-Object Windows.Forms.DataGridView -Property @{
+$leftTable = Add-C $split.Panel1 (New-Object Windows.Forms.TableLayoutPanel -Property @{
+    Dock = 'Fill'; ColumnCount = 1; RowCount = 3; Padding = '0,0,0,0'
+})
+[void]$leftTable.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle([Windows.Forms.SizeType]::Percent, 100)))
+[void]$leftTable.RowStyles.Add((New-Object Windows.Forms.RowStyle([Windows.Forms.SizeType]::AutoSize)))
+[void]$leftTable.RowStyles.Add((New-Object Windows.Forms.RowStyle([Windows.Forms.SizeType]::Percent, 100)))
+[void]$leftTable.RowStyles.Add((New-Object Windows.Forms.RowStyle([Windows.Forms.SizeType]::AutoSize)))
+
+$settingsHost = New-Object Windows.Forms.Panel -Property @{
+    Dock = 'Top'; AutoSize = $false; Height = 360
+}
+$leftTable.Controls.Add($settingsHost, 0, 0)
+
+$grid = New-Object Windows.Forms.DataGridView -Property @{
     Dock = 'Fill'
     AllowUserToAddRows = $false; AllowUserToDeleteRows = $false; ReadOnly = $true
     AutoSizeColumnsMode = 'None'; ScrollBars = 'Both'; SelectionMode = 'FullRowSelect'
     MultiSelect = $true; RowHeadersVisible = $false; BackgroundColor = 'White'
     AllowUserToResizeColumns = $true; AllowUserToOrderColumns = $true
     ShowCellToolTips = $true
-})
-$top = Add-C $left (New-Object Windows.Forms.Panel -Property @{ Dock = 'Top'; Height = 328 })
-$bottom = Add-C $left (New-Object Windows.Forms.Panel -Property @{ Dock = 'Bottom'; Height = 78 })
-$M = $top
+}
+$leftTable.Controls.Add($grid, 0, 1)
 
-$scanCol = Add-C $M (New-Object Windows.Forms.Panel -Property @{ Dock = 'Right'; Width = 150 })
-$lblCommunity = New-L $M '&Community' 10 13
-$community = New-T $M 78 10 70 $(if ($saved.community) { $saved.community } else { 'public' })
+$bottom = New-Object Windows.Forms.FlowLayoutPanel -Property @{
+    Dock = 'Fill'; AutoSize = $true; AutoSizeMode = 'GrowAndShrink'
+    WrapContents = $true; Padding = '4,6,4,4'; FlowDirection = 'LeftToRight'
+}
+$leftTable.Controls.Add($bottom, 0, 2)
+
+$settingsFlow = New-Object Windows.Forms.FlowLayoutPanel -Property @{
+    Dock = 'Top'; AutoSize = $true; AutoSizeMode = 'GrowAndShrink'
+    WrapContents = $true; FlowDirection = 'LeftToRight'; Padding = '6,4,6,4'
+}
+function New-FlowField($labelText, $ctl, [int]$ctlWidth) {
+    $wrap = New-Object Windows.Forms.FlowLayoutPanel
+    $wrap.AutoSize = $true
+    $wrap.WrapContents = $false
+    $wrap.Margin = New-Object Windows.Forms.Padding(0, 1, 10, 1)
+    $wrap.Padding = New-Object Windows.Forms.Padding(0)
+    $lbl = New-Object Windows.Forms.Label
+    $lbl.Text = $labelText
+    $lbl.AutoSize = $true
+    $lbl.Anchor = 'Left'
+    $lbl.TextAlign = 'MiddleLeft'
+    $lbl.Margin = New-Object Windows.Forms.Padding(0, 6, 6, 0)
+    $ctl.Width = $ctlWidth
+    $ctl.Margin = New-Object Windows.Forms.Padding(0, 2, 0, 2)
+    $ctl.Anchor = 'Left'
+    [void]$wrap.Controls.Add($lbl)
+    [void]$wrap.Controls.Add($ctl)
+    return $wrap
+}
+$community = New-Object Windows.Forms.TextBox
+$community.Text = $(if ($saved.community) { $saved.community } else { 'public' })
 Set-Acc $community 'Community'
-$lblVer = New-L $M '&SNMP' 156 13
-$ver = New-Cb $M 196 10 52 @('v2c','v1') $(if ($saved.version) { $saved.version } else { 'v2c' })
+$ver = New-Object Windows.Forms.ComboBox -Property @{ DropDownStyle = 'DropDownList'; Width = 70 }
+[void]$ver.Items.AddRange(@('v2c','v1'))
+$ver.SelectedItem = $(if ($saved.version) { $saved.version } else { 'v2c' })
+if ($ver.SelectedIndex -lt 0) { $ver.SelectedIndex = 0 }
 Set-Acc $ver 'SNMP version'
-$lblPort = New-L $M '&Port' 256 13
-$port = New-N $M 288 10 50 1 65535 $(if ($saved.port) { $saved.port } else { 161 })
+$port = New-Object Windows.Forms.NumericUpDown -Property @{ Minimum = 1; Maximum = 65535 }
+$port.Value = [decimal]$(if ($saved.port) { $saved.port } else { 161 })
 Set-Acc $port 'Port'
-$lblTimeout = New-L $M '&Timeout (ms)' 346 13
-$timeout = New-N $M 430 10 58 100 30000 $(if ($saved.timeoutMs) { $saved.timeoutMs } else { 1500 }) 100
+$timeout = New-Object Windows.Forms.NumericUpDown -Property @{ Minimum = 100; Maximum = 30000; Increment = 100 }
+$timeout.Value = [decimal]$(if ($saved.timeoutMs) { $saved.timeoutMs } else { 1500 })
 Set-Acc $timeout 'Timeout (ms)'
-$lblRetries = New-L $M '&Retries' 496 13
-$retries = New-N $M 544 10 40 0 8 $(if ($null -ne $saved.retries) { $saved.retries } else { 1 })
+$retries = New-Object Windows.Forms.NumericUpDown -Property @{ Minimum = 0; Maximum = 8 }
+$retries.Value = [decimal]$(if ($null -ne $saved.retries) { $saved.retries } else { 1 })
 Set-Acc $retries 'Retries'
 $savedConc = 32
 if ($saved -and ($saved.PSObject.Properties.Name -contains 'concurrency') -and $saved.concurrency) { $savedConc = $saved.concurrency }
-$lblConc = New-L $scanCol 'P&arallel' 8 10
-$concurrency = New-N $scanCol 68 8 70 1 64 $savedConc
+$concurrency = New-Object Windows.Forms.NumericUpDown -Property @{ Minimum = 1; Maximum = 64 }
+$concurrency.Value = [decimal]$savedConc
 Set-Acc $concurrency 'Parallel queries'
+[void]$settingsFlow.Controls.Add((New-FlowField '&Community' $community 70))
+[void]$settingsFlow.Controls.Add((New-FlowField '&SNMP version' $ver 70))
+[void]$settingsFlow.Controls.Add((New-FlowField '&Port' $port 60))
+[void]$settingsFlow.Controls.Add((New-FlowField '&Timeout (ms)' $timeout 70))
+[void]$settingsFlow.Controls.Add((New-FlowField '&Retries' $retries 50))
+[void]$settingsFlow.Controls.Add((New-FlowField 'P&arallel queries' $concurrency 60))
 
-New-L $M 'Printer &IPs, ranges, or CIDR (one per line or comma-separated)' 10 42 | Out-Null
-$targets = Add-C $M (New-Object Windows.Forms.TextBox -Property @{ Location = '10,62'; Size = '520,90'; Multiline = $true; ScrollBars = 'Both'; WordWrap = $false; AcceptsReturn = $true; Font = $fontMono })
+$M = New-Object Windows.Forms.Panel -Property @{ Dock = 'Top'; Height = 300 }
+# Add the SNMP row first so the later Dock=Top of $M sits above it.
+[void]$settingsHost.Controls.Add($settingsFlow)
+[void]$settingsHost.Controls.Add($M)
+$scanCol = Add-C $M (New-Object Windows.Forms.Panel -Property @{ Dock = 'Right'; Width = 150 })
+New-L $M 'Printer &IPs, ranges, or CIDR (one per line or comma-separated)' 10 6 | Out-Null
+$targets = Add-C $M (New-Object Windows.Forms.TextBox -Property @{ Location = '10,24'; Size = '520,72'; Multiline = $true; ScrollBars = 'Vertical'; WordWrap = $false; AcceptsReturn = $true; Font = $fontMono })
 Set-Acc $targets 'Printer IPs, ranges, or CIDR'
-if ($saved.targets) { $targets.Text = $saved.targets }
-$load = New-B $scanCol '&Load list...' 10 62 130 28
+if ($saved.targets) {
+    $script:updatingTargets = $true
+    try { $targets.Text = Repair-QmTargetText $saved.targets } finally { $script:updatingTargets = $false }
+}
+$load = New-B $scanCol '&Load list...' 10 4 130 28
 Set-Acc $load 'Load list'
-$scan = New-B $scanCol '&Scan' 10 94 130 36
+$importMps = New-B $scanCol (Get-QmImportMpsButtonText) 10 36 130 28
+Set-Acc $importMps (Get-QmImportMpsButtonText)
+$scan = New-B $scanCol '&Scan' 10 76 130 36
 $scan.Font = $fontBold
-$scan.BackColor = [Drawing.Color]::FromArgb(25, 135, 84)
+$pri = Get-QmPrimaryButtonArgb
+$scan.BackColor = [Drawing.Color]::FromArgb([int]$pri[0], [int]$pri[1], [int]$pri[2])
 $scan.ForeColor = [Drawing.Color]::White
 $scan.FlatStyle = 'Flat'
 $scan.FlatAppearance.BorderSize = 0
 $scan.UseVisualStyleBackColor = $false
 Set-Acc $scan 'Scan'
-$scanCancel = New-B $scanCol 'S&top scan' 10 94 130 36
+$scanCancel = New-B $scanCol 'S&top scan' 10 76 130 36
 $scanCancel.Font = $fontBold
 $scanCancel.BackColor = [Drawing.Color]::FromArgb(146, 64, 14)
 $scanCancel.ForeColor = [Drawing.Color]::White
@@ -248,50 +385,64 @@ $scanCancel.FlatAppearance.BorderSize = 0
 $scanCancel.UseVisualStyleBackColor = $false
 $scanCancel.Visible = $false
 Set-Acc $scanCancel 'Stop scan'
-$scanBar = Add-C $scanCol (New-Object Windows.Forms.ProgressBar -Property @{ Location = '10,136'; Size = '80,18' })
-Set-Acc $scanBar 'Scan progress'
-$scanCount = New-L $scanCol '' 94 136
-$scanCount.AutoSize = $true
-Set-Acc $scanCount 'Addresses checked'
+$tipsBtn = New-B $scanCol '&Tips' 10 118 130 28
+Set-Acc $tipsBtn 'Tips'
+$editMap = New-B $scanCol '&Edit mapping...' 10 158 130 28
+Set-Acc $editMap 'Edit mapping'
 $f.AcceptButton = $scan
+$scanCount = $null
 
 $initialRemarks = 'Imported by QuMeter'
 if ($script:cfg -and $null -ne $script:cfg.eaRemarks) { $initialRemarks = [string]$script:cfg.eaRemarks }
 if ($saved -and ($saved.PSObject.Properties.Name -contains 'remarks')) { $initialRemarks = [string]$saved.remarks }
-$lblRemarks = New-L $M '&Meter remarks' 10 163
-$remarks = New-T $M 110 160 420 $initialRemarks
+$lblRemarks = New-L $M '&Meter remarks' 10 102
+$remarks = New-T $M 110 99 420 $initialRemarks
 Set-Acc $remarks 'Meter remarks'
-$editMap = New-B $scanCol '&Edit mapping...' 10 158 130 26
-Set-Acc $editMap 'Edit mapping'
+$lblCustomer = New-L $M '&Customer' 10 130
+$customerFilter = Add-C $M (New-Object Windows.Forms.ComboBox -Property @{ Location = '78,127'; Width = 452; DropDownStyle = 'DropDownList' })
+Set-Acc $customerFilter 'Customer'
+[void]$customerFilter.Items.Add((Get-QmMpsIpSearchLabel))
+$customerFilter.SelectedIndex = 0
+$customerFilter.Enabled = $true
 
-$excludeTo = Add-C $M (New-Object Windows.Forms.CheckBox -Property @{ Text = "Don't show printers that timed out in the grid or in exports"; Location = '10,190'; AutoSize = $true })
-Set-Acc $excludeTo 'Hide printers that timed out'
-if ($saved.PSObject.Properties.Name -contains 'excludeTimedOut' -and $saved.excludeTimedOut) { $excludeTo.Checked = $true }
+$excludeTo = Add-C $M (New-Object Windows.Forms.CheckBox -Property @{ Text = 'Exclude IPs that are timing out'; Location = '10,156'; AutoSize = $false })
+Set-Acc $excludeTo 'Exclude IPs that are timing out'
+$excludeTo.Checked = $true
+if ($saved -and ($saved.PSObject.Properties.Name -contains 'excludeTimedOut')) { $excludeTo.Checked = [bool]$saved.excludeTimedOut }
 
-$excludeNoSerial = Add-C $M (New-Object Windows.Forms.CheckBox -Property @{ Text = "Don't show printers with no serial number in the grid or in exports"; Location = '10,212'; AutoSize = $true })
-Set-Acc $excludeNoSerial 'Hide printers with no serial number'
-if ($script:cfg -and $script:cfg.excludeNoSerial) { $excludeNoSerial.Checked = $true }
-if ($saved -and ($saved.PSObject.Properties.Name -contains 'excludeNoSerial') -and $saved.excludeNoSerial) { $excludeNoSerial.Checked = $true }
+$excludeNoSerial = Add-C $M (New-Object Windows.Forms.CheckBox -Property @{ Text = 'Only show/include devices that are reporting serial numbers(Usually Only Printers)'; Location = '10,178'; AutoSize = $false })
+Set-Acc $excludeNoSerial 'Only show/include devices that are reporting serial numbers(Usually Only Printers)'
+$excludeNoSerial.Checked = $true
+if ($saved -and ($saved.PSObject.Properties.Name -contains 'excludeNoSerial')) { $excludeNoSerial.Checked = [bool]$saved.excludeNoSerial }
+elseif ($script:cfg -and ($script:cfg.PSObject.Properties.Name -contains 'excludeNoSerial')) { $excludeNoSerial.Checked = [bool]$script:cfg.excludeNoSerial }
 
-New-L $M 'Responding IPs (did not time out) - copy this list to rescan only those printers:' 10 234 | Out-Null
-$responded = Add-C $M (New-Object Windows.Forms.TextBox -Property @{ Location = '10,252'; Size = '520,54'; Multiline = $true; ReadOnly = $true; ScrollBars = 'Both'; WordWrap = $false; Font = $fontMono; BackColor = 'White' })
-Set-Acc $responded 'Responding IPs'
-$copyIps = New-B $scanCol '&Copy' 10 252 130 28
+$lblResponded = New-L $M 'Responding IPs (did not time out) - copy this list to rescan only those printers:' 10 202
+$copyIps = New-B $M '&Copy' 450 198 80 24
 Set-Acc $copyIps 'Copy responding IPs'
+$copyIps.Enabled = $false
+$responded = Add-C $M (New-Object Windows.Forms.TextBox -Property @{ Location = '10,222'; Size = '520,48'; Multiline = $true; ReadOnly = $true; ScrollBars = 'Vertical'; WordWrap = $false; Font = $fontMono; BackColor = 'White' })
+Set-Acc $responded 'Responding IPs'
 
-foreach ($col in @('IP','Model','Serial','Total','Mono','Color','Status','SysDescr','Error')) {
+foreach ($col in (Get-QmManualGridColumnOrder)) {
     [void]$grid.Columns.Add($col, $col)
 }
 $grid.Columns['IP'].Width = 110
-$grid.Columns['Model'].Width = 160
-$grid.Columns['Serial'].Width = 120
-$grid.Columns['Total'].Width = 70
-$grid.Columns['Mono'].Width = 70
-$grid.Columns['Color'].Width = 70
 $grid.Columns['Status'].Width = 80
-$grid.Columns['SysDescr'].Width = 200
+$grid.Columns['Serial'].Width = 110
+$grid.Columns['Model'].Width = 140
+$grid.Columns['Total'].Width = 60
+$grid.Columns['Mono'].Width = 60
+$grid.Columns['Color'].Width = 60
+$grid.Columns['Customer'].Width = 130
+$grid.Columns['Brand'].Width = 80
+$grid.Columns['Asset'].Width = 80
+$grid.Columns['System'].Width = 110
+$grid.Columns['SysDescr'].Width = 160
 $grid.Columns['Error'].MinimumWidth = 80
 $grid.Columns['Error'].AutoSizeMode = 'Fill'
+foreach ($short in @('IP','Status','Serial','Model','Total','Mono','Color','Brand','Asset')) {
+    $grid.Columns[$short].AutoSizeMode = 'AllCells'
+}
 $grid.Add_CellToolTipTextNeeded({
     if ($_.RowIndex -ge 0 -and $_.ColumnIndex -ge 0) {
         $_.ToolTipText = [string]$grid.Rows[$_.RowIndex].Cells[$_.ColumnIndex].Value
@@ -299,26 +450,88 @@ $grid.Add_CellToolTipTextNeeded({
 })
 Set-Acc $grid 'Scan results'
 
-$exportEa   = New-B $bottom 'Export e-automate' 10 6 130 30
-$exportMps  = New-B $bottom 'Export MPS' 145 6 100 30
-$exportXlsx = New-B $bottom 'Export Excel' 250 6 110 30
-$exportCsv  = New-B $bottom 'Export results CSV' 365 6 140 30
-$exportAll  = New-B $bottom 'Export all...' 510 6 110 30
+$exportEa   = New-B $bottom 'Export e-automate' 0 0 130 30
+$exportMps  = New-B $bottom 'Export MPS' 0 0 100 30
+$exportXlsx = New-B $bottom 'Export Excel' 0 0 110 30
+$exportCsv  = New-B $bottom 'Export results CSV' 0 0 140 30
+$exportAll  = New-B $bottom 'Export all...' 0 0 110 30
+foreach ($eb in @($exportEa,$exportMps,$exportXlsx,$exportCsv,$exportAll)) { $eb.Margin = New-Object Windows.Forms.Padding(0, 0, 6, 4) }
 Set-Acc $exportEa 'Export e-automate'
 Set-Acc $exportMps 'Export MPS'
 Set-Acc $exportXlsx 'Export Excel'
 Set-Acc $exportCsv 'Export results CSV'
 Set-Acc $exportAll 'Export all'
-$hideTips = Add-C $bottom (New-Object Windows.Forms.CheckBox -Property @{ Text = '&Hide tips'; AutoSize = $true; Location = '10,44' })
-$hideTips.Checked = [bool]$script:hideTipsPref
-Set-Acc $hideTips 'Hide tips'
-$st = New-L $bottom 'Paste printer IPs and click Scan.' 120 44
-$st.AutoSize = $true
+
+function Fit-FilterCheckboxes {
+    if (-not $M) { return }
+    $fieldW = [math]::Max(220, $M.ClientSize.Width - $scanCol.Width - 20)
+    foreach ($cb in @($excludeTo, $excludeNoSerial)) {
+        $cb.AutoSize = $false
+        $cb.Width = $fieldW
+        $pref = $cb.GetPreferredSize((New-Object Drawing.Size($fieldW, 0)))
+        $cb.Height = [math]::Max(20, [int]$pref.Height)
+    }
+    $excludeTo.Location = New-Object Drawing.Point(10, 156)
+    $excludeNoSerial.Location = New-Object Drawing.Point(10, ($excludeTo.Bottom + 2))
+    if ($lblResponded) { $lblResponded.Location = New-Object Drawing.Point(10, ($excludeNoSerial.Bottom + 4)) }
+    if ($copyIps -and $lblResponded) {
+        $copyIps.Location = New-Object Drawing.Point([math]::Max($lblResponded.Right + 8, $fieldW - 80), $lblResponded.Top)
+    }
+    if ($responded -and $lblResponded) {
+        $responded.Location = New-Object Drawing.Point(10, ($lblResponded.Bottom + 2))
+        $responded.Size = New-Object Drawing.Size($fieldW, 48)
+    }
+    $need = 8
+    if ($responded) { $need = $responded.Bottom + 8 }
+    if ($M.Height -ne $need) { $M.Height = [math]::Max(220, $need) }
+}
+function Update-SettingsHostHeight {
+    if (-not $settingsHost -or -not $M -or -not $settingsFlow) { return }
+    $fw = 0
+    try { $fw = $settingsHost.ClientSize.Width } catch { }
+    if ($fw -lt 100 -and $split) { try { $fw = $split.Panel1.ClientSize.Width } catch { } }
+    if ($fw -lt 100) { $fw = 700 }
+    $fh = 36
+    try {
+        $ps = $settingsFlow.GetPreferredSize((New-Object Drawing.Size($fw, 0)))
+        if ($ps.Height -gt 0) { $fh = [int]$ps.Height }
+    } catch {
+        try { $fh = [int]$settingsFlow.PreferredSize.Height } catch { }
+    }
+    if ($fh -lt 32) { $fh = 32 }
+    if ($fh -gt 110) { $fh = 110 }
+    $want = [int]$M.Height + $fh
+    if ($settingsHost.Height -ne $want) { $settingsHost.Height = $want }
+}
+function Layout-ManualFields {
+    if ($script:layoutBusy) { return }
+    $script:layoutBusy = $true
+    try {
+        $fieldW = [math]::Max(220, $M.ClientSize.Width - $scanCol.Width - 20)
+        $targets.Width = $fieldW
+        $responded.Width = $fieldW
+        $remarks.Width = [math]::Max(160, $fieldW - 100)
+        if ($customerFilter) { $customerFilter.Width = [math]::Max(160, $fieldW - 68) }
+        Fit-FilterCheckboxes
+        Update-SettingsHostHeight
+    } finally { $script:layoutBusy = $false }
+}
+$M.Add_Resize({ Layout-ManualFields })
+$settingsHost.Add_Resize({ Layout-ManualFields })
 
 $manualTips = @"
-TIPS - USING THE MANUAL OUTPUT
+Tips - using the Manual tab
 
-RECOMMENDED: e-automate workbook  (Export e-automate)
+Scan
+Paste IPs, ranges (10.0.1.1-10.0.1.50 or 10.0.1.1-50) or CIDR (10.0.1.0/24), set the community (usually public), and click Scan. If the IP box is empty and an MPS list is imported, Scan queries the imported IPs for the selected customer (or every imported IP when All customers is selected) and merges the meters with the imported customer details. Click Stop scan to cancel a running scan: results already collected are kept, and addresses not yet probed are marked Cancelled. Exports warn you if the scan was stopped, because those results are incomplete.
+
+Import list (MPS)
+Click Import list (MPS)... under Scan to load an MPS fleet report (.xlsx or .csv). QuMeter reads the IP, customer, brand, model, serial, asset, and other columns, fills the results list, and stores that list until you import again. Older .xls files need to be saved as .xlsx first. Rows with no usable IP stay in the list (status No IP) and are not scanned. Blank rows are skipped. The imported list is saved in mps-import.json and comes back after you restart the app.
+
+Customer drop-down
+IP Search/No Customer is always the first item. It is the default (and the only item) when no list is imported. After an import, All customers and each customer in the file appear under it. Picking a customer shows only that customer's rows in the list. Clicking or tabbing into the Printer IPs box, or typing an IP or range, switches the drop-down to IP Search/No Customer. In that mode Scan uses the addresses in the box as a normal scan, with no customer filter.
+
+Recommended: e-automate workbook (Export e-automate)
 Best path for updating meters on many serial numbers at once. Only printers that answered AND reported a serial are included.
 e-automate matches each row to equipment by Model + Serial. Equipment Number is left blank.
 The official Import and Export Utility accepts .xlsx only.
@@ -331,27 +544,26 @@ How to import it into e-automate:
  d. If the utility rejects this generated workbook, download the official EA_MeterImport.xlsx template, set Source in the header, paste our data rows (not our header) under row 8, save, and import that official file.
  e-automate rejects a row if you send a meter type the equipment doesn't have, or leave out one it does have. Blank Mono/Color means the printer didn't report it; QuMeter never estimates.
 
-ALTERNATIVE: MPS file, then MPS to e-automate  (Export MPS)
+Alternative: MPS file, then MPS to e-automate (Export MPS)
 Use this if you already have an MPS tool (for example FMAudit / Printanista) reporting meters into e-automate.
  - Default MPS CSV: SerialNumber, Model, IPAddress, TotalCount, MonoCount, ColorCount, ReadDate, ReadDateTime, SysDescr (same layout the Automate tab drops in a watch folder). Confirm your MPS tool accepts that layout, or map the columns.
  - FMAudit-style CSV is the second "Save as type" in the Export MPS dialog: IP Address, Manufacturer, Model, Serial Number, Description, Total Pages, Mono Pages, Color Pages (published FMAudit audit-history names). Use this if your tool expects those headers.
 A single official "import this file into ECI MPS" template was not published in the public docs, so confirm the columns in your MPS tool before a live import.
 
-Excel workbook  (Export Excel)
-Opens in Excel with sheets for Results, e-automate, MPS, FMAudit, and import instructions. Timed-out IPs and IPs with no serial number are omitted if those boxes are checked. This is the record/spreadsheet export, not a substitute for the official e-automate template if the utility requires it.
+Excel workbook (Export Excel)
+Opens in Excel with sheets for Results, e-automate, MPS, FMAudit, and import instructions. Timed-out IPs and devices with no serial number are omitted when those boxes are checked (they are checked by default). This is the record/spreadsheet export, not a substitute for the official e-automate template if the utility requires it.
 
-General CSV  (Export results CSV)
-Your record of the scan: date, time, IP, model, serial, total, mono, color, status and any error. Timeouts and IPs with no serial are included unless those boxes are checked.
+General CSV (Export results CSV)
+Your record of the scan: date, time, IP, model, serial, total, mono, color, status and any error. Timeouts and devices with no serial are left out when those boxes are checked (they are checked by default).
 
 Responding IP list
-After a scan, the box above the grid lists every address that did not time out, one per line, in the same format as the IP input. If printers with no serial are hidden, addresses with a blank or placeholder serial (N/A, unknown, 0) are omitted too. Click Copy and paste it back into the input to rescan only those printers.
-Click Stop scan to cancel a scan that is still running. Addresses already read are kept; addresses not yet probed are marked Cancelled. Exports warn you if the scan was stopped, because those results are incomplete.
+After a scan, the box above the grid lists every address that did not time out, one per line, in the same format as the IP input. When "Only show/include devices that are reporting serial numbers(Usually Only Printers)" is checked, addresses with a blank or placeholder serial (N/A, unknown, 0) are omitted too. Click Copy and paste it back into the input to rescan only those printers.
 
-Don't show printers that timed out
-When checked, timed-out addresses disappear from the grid and from every export. Printers that answered with an error still appear.
+Exclude IPs that are timing out
+This box is checked by default. When checked, timed-out addresses disappear from the grid and from every export. Printers that answered with an error still appear. Uncheck it if you want timeouts included.
 
-Don't show printers with no serial number
-When checked, printers with no serial number (blank, whitespace, N/A, unknown, or 0) disappear from the grid, from every export (Excel, e-automate, MPS, FMAudit, Export all, and results CSV), and from the Responding IPs list. The same checkbox on the Automate Settings tab is used by scheduled QuMeter Auto runs after it is saved.
+Only show/include devices that are reporting serial numbers(Usually Only Printers)
+This box is checked by default. When checked, devices with no serial number (blank, whitespace, N/A, unknown, or 0) disappear from the grid, from every export (Excel, e-automate, MPS, FMAudit, Export all, and results CSV), and from the Responding IPs list. The same checkbox on the Automate Settings tab is used by scheduled QuMeter Auto runs after it is saved.
 
 Meter remarks
 The Meter remarks box is written into the e-automate Remarks column (and the e-automate sheet in the Excel workbook). The default is Imported by QuMeter. Leave it empty for a blank remarks field. Commas and quotes are escaped in the CSV. Optional tokens, replaced per printer: {date} {time} {ip} {serial} {model}. The same remarks text is used by Automate / QuMeter Auto (including scheduled runs) after it is saved.
@@ -364,19 +576,53 @@ Scan tips
 - Big ranges (/24) take a few seconds; non-printers just time out.
 - Parallel queries is how many printers are asked at once (1-64).
 - Run from a PC on the printer network: SNMP is UDP 161.
+
+Tips
+After the first run, this pane stays hidden unless you click Tips next to Scan. On a narrow window it collapses automatically so the results grid stays readable; click Tips to show it again. Hide tips is in the header of this pane.
 "@
 $tipsPanel = $split.Panel2
 $tipsPanel.BackColor = [Drawing.Color]::FromArgb(255, 252, 235)
-$manualTipsBox = New-Tips $tipsPanel $manualTips 6 6 100 100 'Top,Bottom,Left,Right'
-$split.Panel2.Add_Resize({
-    if ($manualTipsBox) { $manualTipsBox.Size = "$($split.Panel2.ClientSize.Width - 12),$($split.Panel2.ClientSize.Height - 12)" }
-})
-function Apply-TipsVisibility {
-    $split.Panel2Collapsed = [bool]$hideTips.Checked
-    $script:hideTipsPref = [bool]$hideTips.Checked
-    $hideTips.Text = $(if ($hideTips.Checked) { '&Show tips' } else { '&Hide tips' })
+$tipsHeader = Add-C $tipsPanel (New-Object Windows.Forms.Panel -Property @{ Dock = 'Top'; Height = 28; BackColor = [Drawing.Color]::FromArgb(255, 252, 235) })
+$tipsHeaderLabel = Add-C $tipsHeader (New-Object Windows.Forms.Label -Property @{ Text = 'Tips'; Location = '6,5'; AutoSize = $true; Font = (Get-TipsHeadingFont (New-Object Drawing.Font('Segoe UI', 9))) })
+$hideTipsLink = Add-C $tipsHeader (New-Object Windows.Forms.LinkLabel -Property @{ Text = 'Hide tips'; AutoSize = $true; Location = '80,6'; LinkBehavior = 'AlwaysUnderline' })
+Set-Acc $hideTipsLink 'Hide tips'
+$manualTipsBox = New-Tips $tipsPanel $manualTips 6 34 100 100 'Top,Bottom,Left,Right'
+function Layout-TipsPane {
+    if ($hideTipsLink -and $tipsHeader) {
+        $hideTipsLink.Left = [math]::Max(80, $tipsHeader.ClientSize.Width - $hideTipsLink.Width - 8)
+    }
+    if ($manualTipsBox -and -not $split.Panel2Collapsed) {
+        $manualTipsBox.Location = New-Object Drawing.Point(6, 34)
+        $manualTipsBox.Size = New-Object Drawing.Size([math]::Max(20, $split.Panel2.ClientSize.Width - 12), [math]::Max(20, $split.Panel2.ClientSize.Height - 40))
+    }
 }
-$hideTips.Add_CheckedChanged({ Apply-TipsVisibility; Persist })
+$split.Panel2.Add_Resize({ Layout-TipsPane })
+$tipsHeader.Add_Resize({ Layout-TipsPane })
+function Apply-TipsVisibility {
+    $width = 1100
+    try { $width = [int]$f.Width } catch { }
+    $collapse = Test-QmTipsShouldCollapse -Width $width -HidePref ([bool]$script:hideTipsPref) -PinnedOpen ([bool]$script:tipsPinnedOpen) -Threshold (Get-QmTipsAutoCollapseWidth)
+    $split.Panel2Collapsed = [bool]$collapse
+    if ($tipsBtn) { $tipsBtn.Visible = $true }
+    Layout-TipsPane
+}
+function Show-TipsPane {
+    $script:userSetTips = $true
+    $script:hideTipsPref = $false
+    $script:tipsPinnedOpen = $true
+    Apply-TipsVisibility
+    Persist
+}
+function Hide-TipsPane {
+    $script:userSetTips = $true
+    $script:hideTipsPref = $true
+    $script:tipsPinnedOpen = $false
+    Apply-TipsVisibility
+    Persist
+}
+$tipsBtn.Add_Click({ Show-TipsPane })
+$hideTipsLink.Add_LinkClicked({ Hide-TipsPane })
+$f.Add_Resize({ Apply-TipsVisibility })
 $f.Add_Shown({
     try {
         if (-not $split.Panel2Collapsed -and $split.Width -gt 700) {
@@ -388,26 +634,155 @@ $f.Add_Shown({
         }
     } catch { }
     Apply-TipsVisibility
-    try {
-        if ($manualTipsBox -and -not $split.Panel2Collapsed) {
-            $manualTipsBox.Size = "$([math]::Max(20, $split.Panel2.ClientSize.Width - 12)),$([math]::Max(20, $split.Panel2.ClientSize.Height - 12))"
-        }
-    } catch { }
-})
-$M.Add_Resize({
-    $fieldW = [math]::Max(220, $M.ClientSize.Width - $scanCol.Width - 20)
-    $targets.Width = $fieldW
-    $responded.Width = $fieldW
-    $remarks.Width = [math]::Max(160, $fieldW - 100)
+    try { Layout-TipsPane } catch { }
+    try { Layout-ManualFields } catch { }
+    Start-QmGridSelectionClear
 })
 
 $script:scanJob = $null
+function Set-TargetText([string]$Text) {
+    $script:updatingTargets = $true
+    try { $targets.Text = [string]$Text } finally { $script:updatingTargets = $false }
+}
+function Get-MpsFilterRows {
+    if (-not $script:mpsImport) { return (New-Object System.Collections.Generic.List[object]) }
+    return (Get-QmMpsRowsForCustomer -Rows $script:mpsImport.Rows -Customer $script:mpsSelectedCustomer)
+}
+function Set-MpsCustomerFilterItems([string]$Selected) {
+    $script:updatingCustomerFilter = $true
+    try {
+        $customerFilter.Items.Clear()
+        $rowSource = $null
+        if ($script:mpsImport) { $rowSource = $script:mpsImport.Rows }
+        foreach ($name in (ConvertTo-QmFlatList (Get-QmMpsCustomerFilterItems $rowSource))) {
+            [void]$customerFilter.Items.Add([string]$name)
+        }
+        $pick = $Selected
+        if ([string]::IsNullOrWhiteSpace($pick)) { $pick = Get-QmMpsDefaultCustomer -HasImport ([bool]$script:mpsImport) }
+        $idx = $customerFilter.Items.IndexOf($pick)
+        if ($idx -lt 0) {
+            $pick = Get-QmMpsDefaultCustomer -HasImport ([bool]$script:mpsImport)
+            $idx = $customerFilter.Items.IndexOf($pick)
+            if ($idx -lt 0) { $idx = 0; $pick = [string]$customerFilter.Items[0] }
+        }
+        $customerFilter.SelectedIndex = $idx
+        $script:mpsSelectedCustomer = $pick
+        $customerFilter.Enabled = $true
+    } finally { $script:updatingCustomerFilter = $false }
+}
+function Show-MpsImportedList {
+    if (Test-QmMpsIpSearchMode $script:mpsSelectedCustomer) { return }
+    $rows = Get-MpsFilterRows
+    Set-TargetText (Get-QmMpsIpText $rows)
+    $script:readings.Clear()
+    Add-QmReadingsToList -List $script:readings -Items @($rows | ForEach-Object { ConvertTo-QmImportedReading $_ })
+    $script:listSource = 'import'
+    $script:scanWasCancelled = $false
+    Show-ManualResults
+}
+function Apply-MpsImport($Import, [string]$Selected = 'All customers') {
+    $script:mpsImport = $Import
+    Set-MpsCustomerFilterItems $Selected
+    if ($Import) {
+        Save-QmMpsImport -Import $Import -Path $script:mpsImportPath -SelectedCustomer $script:mpsSelectedCustomer
+    }
+    Show-MpsImportedList
+    Persist
+}
+function Restore-MpsImport {
+    $imp = Read-QmMpsImport -Path $script:mpsImportPath
+    if (-not $imp -or -not $imp.Rows -or $imp.Rows.Count -eq 0) { return }
+    $sel = [string]$imp.SelectedCustomer
+    if ($saved -and ($saved.PSObject.Properties.Name -contains 'mpsSelectedCustomer') -and $saved.mpsSelectedCustomer) {
+        $sel = [string]$saved.mpsSelectedCustomer
+    }
+    $script:mpsImport = $imp
+    Set-MpsCustomerFilterItems $sel
+    Show-MpsImportedList
+}
+
 $load.Add_Click({
     $d = New-Object Windows.Forms.OpenFileDialog -Property @{ Filter = 'Text files (*.txt;*.csv)|*.txt;*.csv|All files (*.*)|*.*'; Title = 'Load printer list' }
     if ($d.ShowDialog() -eq 'OK') { $targets.Text = [System.IO.File]::ReadAllText($d.FileName) }
 })
+$importMps.Add_Click({
+    if ($script:scanJob) { return }
+    $d = New-Object Windows.Forms.OpenFileDialog -Property @{
+        Title = 'Import list (MPS)'
+        Filter = 'MPS list (*.xlsx;*.csv)|*.xlsx;*.csv|Excel workbook (*.xlsx)|*.xlsx|CSV (*.csv)|*.csv|All files (*.*)|*.*'
+    }
+    if ($script:lastMpsImportFolder -and (Test-Path -LiteralPath $script:lastMpsImportFolder)) {
+        $d.InitialDirectory = $script:lastMpsImportFolder
+    }
+    if ($d.ShowDialog() -ne 'OK') { return }
+    $script:lastMpsImportFolder = Split-Path -Parent $d.FileName
+    try {
+        $imp = Import-QmMpsList -Path $d.FileName
+    } catch {
+        Msg $_.Exception.Message 'Warning'
+        return
+    }
+    if (-not $imp -or $imp.TotalRows -eq 0) {
+        Msg 'No printer rows were found in that file.'
+        return
+    }
+    Apply-MpsImport $imp 'All customers'
+})
+$customerFilter.Add_SelectedIndexChanged({
+    if ($script:updatingCustomerFilter) { return }
+    $sel = [string]$customerFilter.SelectedItem
+    if ([string]::IsNullOrWhiteSpace($sel)) { return }
+    $script:mpsSelectedCustomer = $sel
+    if ($script:mpsImport -and (Test-Path -LiteralPath $script:mpsImportPath)) {
+        try { Save-QmMpsImport -Import $script:mpsImport -Path $script:mpsImportPath -SelectedCustomer $sel } catch { }
+    }
+    if (Test-QmMpsIpSearchMode $sel) {
+        # Leave the IP box as-is so focusing or typing there cannot loop or wipe typed addresses.
+        Persist
+        return
+    }
+    if (-not $script:mpsImport) { Persist; return }
+    if ($script:listSource -eq 'scan') {
+        $importRows = Get-MpsFilterRows
+        $ipSet = @{}
+        foreach ($ip in (ConvertTo-QmFlatList (Get-QmMpsIpList $importRows))) { $ipSet[[string]$ip] = $true }
+        $scanRows = New-Object System.Collections.Generic.List[object]
+        foreach ($r in (ConvertTo-QmFlatList $script:lastScanReadings)) {
+            if ($r.Ip -and $ipSet.ContainsKey([string]$r.Ip)) { [void]$scanRows.Add($r) }
+        }
+        $script:readings.Clear()
+        $merged = Merge-QmImportedReadings -ScanReadings $scanRows -ImportRows $importRows
+        Add-QmReadingsToList -List $script:readings -Items $merged
+        Set-TargetText (Get-QmMpsIpText $importRows)
+        Persist
+        Show-ManualResults
+        return
+    }
+    Show-MpsImportedList
+    Persist
+})
+function Switch-ToIpSearchMode([bool]$OnFocus = $false) {
+    if ($script:updatingTargets) { return }
+    if ($script:scanJob) { return }
+    if (-not (Test-QmMpsShouldSwitchToIpSearch -CurrentCustomer $script:mpsSelectedCustomer -TargetText $targets.Text -HasImport ([bool]$script:mpsImport) -Programmatic $false -OnFocus $OnFocus)) { return }
+    $script:updatingCustomerFilter = $true
+    try {
+        $script:mpsSelectedCustomer = Get-QmMpsIpSearchLabel
+        $idx = $customerFilter.Items.IndexOf((Get-QmMpsIpSearchLabel))
+        if ($idx -ge 0 -and $customerFilter.SelectedIndex -ne $idx) { $customerFilter.SelectedIndex = $idx }
+    } finally { $script:updatingCustomerFilter = $false }
+    if ($script:mpsImport -and (Test-Path -LiteralPath $script:mpsImportPath)) {
+        try { Save-QmMpsImport -Import $script:mpsImport -Path $script:mpsImportPath -SelectedCustomer $script:mpsSelectedCustomer } catch { }
+    }
+    Persist
+}
+$targets.Add_Enter({ Switch-ToIpSearchMode -OnFocus $true })
+$targets.Add_GotFocus({ Switch-ToIpSearchMode -OnFocus $true })
+$targets.Add_TextChanged({ Switch-ToIpSearchMode -OnFocus $false })
 function Persist {
-    Save-Settings @{ community = $community.Text; version = $ver.SelectedItem.ToString(); port = [int]$port.Value; timeoutMs = [int]$timeout.Value; retries = [int]$retries.Value; concurrency = [int]$concurrency.Value; targets = $targets.Text; excludeTimedOut = [bool]$excludeTo.Checked; excludeNoSerial = [bool]$excludeNoSerial.Checked; remarks = $remarks.Text; hideTips = [bool]$hideTips.Checked; lastExportFolder = [string]$script:lastExportFolder }
+    if (-not $script:userSetTips -and -not $script:tipsSeen) { $script:hideTipsPref = $true }
+    $script:tipsSeen = $true
+    Save-Settings @{ community = $community.Text; version = $ver.SelectedItem.ToString(); port = [int]$port.Value; timeoutMs = [int]$timeout.Value; retries = [int]$retries.Value; concurrency = [int]$concurrency.Value; targets = (Repair-QmTargetText $targets.Text); excludeTimedOut = [bool]$excludeTo.Checked; excludeNoSerial = [bool]$excludeNoSerial.Checked; remarks = $remarks.Text; hideTips = [bool]$script:hideTipsPref; tipsSeen = $true; lastExportFolder = [string]$script:lastExportFolder; lastMpsImportFolder = [string]$script:lastMpsImportFolder; mpsSelectedCustomer = [string]$script:mpsSelectedCustomer }
     if ($script:cfg) { $script:cfg.eaRemarks = $remarks.Text; $script:cfg.excludeNoSerial = [bool]$excludeNoSerial.Checked }
     if (Test-Path -LiteralPath $configPath) {
         try {
@@ -453,7 +828,7 @@ function Get-ScanCounts {
         Ok = @($all | Where-Object { $_.Status -eq 'OK' }).Count
         Timeout = @($all | Where-Object { $_.Status -eq 'Timeout' }).Count
         Cancelled = @($all | Where-Object { $_.Status -eq 'Cancelled' }).Count
-        Responded = @($all | Where-Object { $_.Status -ne 'Timeout' -and $_.Status -ne 'Cancelled' }).Count
+        Responded = @($all | Where-Object { Test-QmRespondedStatus $_.Status }).Count
         OkSerial = @($all | Where-Object { $_.Status -eq 'OK' -and -not [string]::IsNullOrWhiteSpace($_.Serial) }).Count
     }
 }
@@ -471,8 +846,8 @@ function Confirm-ExportPartialScan {
 function Update-ExportButtons {
     $scanning = [bool]$script:scanJob
     $c = Get-ScanCounts
-    $any = (-not $scanning) -and $c.Total -gt 0 -and $c.Responded -gt 0
-    $ea = $any -and $c.OkSerial -gt 0
+    $any = Test-QmExportButtonsShouldEnable -Scanning $scanning -Total $c.Total -Responded $c.Responded -OkSerial $c.OkSerial -Kind 'general'
+    $ea = Test-QmExportButtonsShouldEnable -Scanning $scanning -Total $c.Total -Responded $c.Responded -OkSerial $c.OkSerial -Kind 'ea'
     foreach ($b in @($exportCsv, $exportXlsx, $exportAll)) {
         $b.Enabled = $any
         $uiTip.SetToolTip($b, $(if ($scanning) { 'Wait for the scan to finish.' } elseif (-not $any) { "No printers responded, so there's nothing to export." } else { '' }))
@@ -482,18 +857,63 @@ function Update-ExportButtons {
     $exportMps.Enabled = $ea
     $uiTip.SetToolTip($exportMps, $(if ($scanning) { 'Wait for the scan to finish.' } elseif ($c.Responded -eq 0) { "No printers responded, so there's nothing to export." } elseif (-not $ea) { 'MPS export needs at least one printer that responded with a serial number.' } else { '' }))
 }
+function Update-CopyButton {
+    if ($copyIps) { $copyIps.Enabled = -not [string]::IsNullOrWhiteSpace($responded.Text) }
+}
+function Clear-QmGridSelection {
+    if (-not $grid -or $grid.IsDisposed) { return }
+    try {
+        $grid.ClearSelection()
+        foreach ($row in @($grid.Rows)) { $row.Selected = $false }
+        $grid.CurrentCell = $null
+    } catch { }
+}
+function Start-QmGridSelectionClear {
+    Clear-QmGridSelection
+    if ($grid -and -not $grid.IsDisposed -and $grid.IsHandleCreated) {
+        [void]$grid.BeginInvoke([Windows.Forms.MethodInvoker]{ Clear-QmGridSelection })
+    }
+    try { if ($script:gridSelTimer) { $script:gridSelTimer.Stop() } } catch { }
+    $script:gridSelTimer = New-Object Windows.Forms.Timer -Property @{ Interval = 50 }
+    $script:gridSelTimer.Add_Tick({
+        try { $script:gridSelTimer.Stop(); Clear-QmGridSelection } catch { }
+    })
+    $script:gridSelTimer.Start()
+}
 function Show-ManualResults {
     $grid.Rows.Clear()
     $responded.Text = Get-QuMeterRespondedIpText -Readings @($script:readings) -ExcludeNoSerial $excludeNoSerial.Checked
     $visible = Get-CurrentReadings
     foreach ($r in $visible) {
-        $i = $grid.Rows.Add($r.Ip, $r.Model, $r.Serial, $r.Total, $r.Mono, $r.Color, $r.Status, $r.SysDescr, $r.ErrorMessage)
+        $ipText = $(if ([string]::IsNullOrWhiteSpace($r.Ip)) { 'no IP' } else { $r.Ip })
+        $i = $grid.Rows.Add($ipText, $r.Status, $r.Serial, $r.Model, $r.Total, $r.Mono, $r.Color, $r.Customer, $r.Brand, $r.AssetNumber, $r.SystemName, $r.SysDescr, $r.ErrorMessage)
         if ($r.Status -eq 'Cancelled') { $grid.Rows[$i].DefaultCellStyle.ForeColor = [Drawing.Color]::FromArgb(150, 90, 0) }
+        elseif ($r.Status -eq 'No IP' -or [string]::IsNullOrWhiteSpace($r.Ip)) {
+            $grid.Rows[$i].DefaultCellStyle.ForeColor = [Drawing.SystemColors]::ControlText
+            $grid.Rows[$i].DefaultCellStyle.BackColor = [Drawing.Color]::FromArgb(245, 245, 245)
+            $grid.Rows[$i].Cells['IP'].Style.Font = New-Object Drawing.Font($grid.Font, [Drawing.FontStyle]::Italic)
+        }
+        elseif ($r.Status -eq 'Imported') { $grid.Rows[$i].DefaultCellStyle.ForeColor = [Drawing.SystemColors]::ControlText }
         elseif ($r.Status -ne 'OK') { $grid.Rows[$i].DefaultCellStyle.ForeColor = [Drawing.Color]::Firebrick }
     }
-    $grid.ClearSelection()
+    Start-QmGridSelectionClear
+    Update-CopyButton
+    Set-ScanProgressVisible $false
     $c = Get-ScanCounts
     $shown = @($visible).Count
+    if ($script:listSource -eq 'import') {
+        $ipCount = @($visible | Where-Object { $_.Status -eq 'Imported' }).Count
+        $noIpCount = @($visible | Where-Object { $_.Status -eq 'No IP' }).Count
+        $who = $script:mpsSelectedCustomer
+        if (Test-QmMpsAllCustomersMode $who) { $who = 'all customers' }
+        $src = ''
+        if ($script:mpsImport -and $script:mpsImport.SourceName) { $src = " from $($script:mpsImport.SourceName)" }
+        Set-ProgressBarState $scanBar 'normal'
+        Set-AppStatus "Imported list$src ($who): $shown row(s), $ipCount with an IP, $noIpCount with no IP. Click Scan to read meters for the IPs shown."
+        if ($scanCount) { $scanCount.Text = '' }
+        Update-ExportButtons
+        return
+    }
     $checked = $c.Total - $c.Cancelled
     if ($script:scanWasCancelled) {
         Set-ProgressBarState $scanBar 'paused'
@@ -512,6 +932,8 @@ function Set-ScanControlsRunning([bool]$running) {
     $scanCancel.Visible = $running
     $scanCancel.Enabled = $running
     $load.Enabled = -not $running
+    $importMps.Enabled = -not $running
+    $customerFilter.Enabled = -not $running
     $f.UseWaitCursor = [bool]$running
     $f.AcceptButton = $(if ($running) { $scanCancel } else { $scan })
     Update-ExportButtons
@@ -524,12 +946,20 @@ function Complete-ManualScan($j) {
         $script:scanWasCancelled = $false
         Set-ProgressBarState $scanBar 'error'
         Set-AppStatus "Scan failed: $($j.Error.Message)" ([Drawing.Color]::Firebrick)
+        Set-ScanProgressVisible $false
         Update-ExportButtons
         return
     }
     $script:readings.Clear()
-    if ($j.Results) { foreach ($r in $j.Results) { [void]$script:readings.Add($r) } }
+    $results = ConvertTo-QmFlatList $j.Results
+    $script:lastScanReadings = ConvertTo-QmFlatList $results
+    if (Test-QmMpsShouldMergeScan -Customer $script:mpsSelectedCustomer -Import $script:mpsImport) {
+        $importRows = Get-QmMpsRowsForCustomer -Rows $script:mpsImport.Rows -Customer $script:mpsSelectedCustomer
+        $results = Merge-QmImportedReadings -ScanReadings $results -ImportRows $importRows
+    }
+    Add-QmReadingsToList -List $script:readings -Items $results
     $script:scanWasCancelled = [bool]$j.IsCancelled
+    $script:listSource = 'scan'
     Show-ManualResults
 }
 $excludeTo.Add_CheckedChanged({
@@ -548,6 +978,8 @@ $copyIps.Add_Click({
     $n = @($text -split '\r?\n' | Where-Object { $_.Trim() }).Count
     Set-AppStatus "Copied $n responding IP(s)."
 })
+$responded.Add_TextChanged({ Update-CopyButton })
+Update-CopyButton
 $editMap.Add_Click({ Start-Process notepad.exe -ArgumentList "`"$mappingPath`"" })
 $exportCsv.Add_Click({
     $list = Get-CurrentReadings
@@ -645,14 +1077,36 @@ $exportAll.Add_Click({
 $scan.Add_Click({
     if ($script:scanJob) { return }
     Persist
-    try { $hosts = [QuMeterSnmp.TargetParser]::Parse($targets.Text, 65536) } catch { Msg $_.Exception.Message 'Warning'; return }
-    if ($hosts.Count -eq 0) { Msg 'Enter at least one IP, range, or CIDR.'; return }
+    $scanText = Get-QmManualScanTargetText -TargetText $targets.Text -Import $script:mpsImport -Customer $script:mpsSelectedCustomer
+    if ([string]::IsNullOrWhiteSpace($scanText)) {
+        if ($script:mpsImport -and -not (Test-QmMpsIpSearchMode $script:mpsSelectedCustomer)) {
+            Msg 'The imported list has no usable IPs for the selected customer.'
+        } else {
+            Msg 'Enter at least one IP, range, or CIDR.'
+        }
+        return
+    }
+    if ((Repair-QmTargetText $targets.Text) -ne $scanText -and -not (Test-QmMpsIpSearchMode $script:mpsSelectedCustomer)) {
+        Set-TargetText $scanText
+    }
+    try { $hosts = [QuMeterSnmp.TargetParser]::Parse($scanText, 65536) } catch { Msg $_.Exception.Message 'Warning'; return }
+    if ($hosts.Count -eq 0) {
+        if ($script:mpsImport -and -not (Test-QmMpsIpSearchMode $script:mpsSelectedCustomer)) {
+            Msg 'The imported list has no usable IPs for the selected customer.'
+        } else {
+            Msg 'Enter at least one IP, range, or CIDR.'
+        }
+        return
+    }
     if ($hosts.Count -gt 256 -and -not (Ask "This expands to $($hosts.Count) addresses. Scan anyway?")) { return }
     $grid.Rows.Clear(); $script:readings.Clear(); $responded.Text = ''
     $script:scanWasCancelled = $false
+    $script:listSource = 'scan'
     $client = New-QuSnmpClient -Community $community.Text.Trim() -Port ([int]$port.Value) -TimeoutMs ([int]$timeout.Value) -Retries ([int]$retries.Value) -Version $ver.SelectedItem.ToString()
     $scanBar.Maximum = [math]::Max(1, $hosts.Count); $scanBar.Value = 0
     Set-ProgressBarState $scanBar 'normal'
+    Set-ScanProgressVisible $true
+    Update-ExportButtons
     if ($scanCount) { $scanCount.Text = "0 / $($hosts.Count)" }
     $script:scanJob = [QuMeterSnmp.ScanJob]::Start($client, [string[]]$hosts, [int]$concurrency.Value)
     Set-ScanControlsRunning $true
@@ -668,16 +1122,25 @@ $scanCancel.Add_Click({
 })
 $script:scanTimer = New-Object Windows.Forms.Timer -Property @{ Interval = 200 }
 $script:scanTimer.Add_Tick({
-    $j = $script:scanJob
-    if (-not $j) { $script:scanTimer.Stop(); return }
-    $scanBar.Value = [math]::Min($j.Done, $scanBar.Maximum)
-    if (-not $j.IsCompleted) {
-        if ($scanCount) { $scanCount.Text = "$($j.Done) / $($j.Total)" }
-        if ($j.IsCancelled) { Set-AppStatus "Stopping scan... $($j.Done) of $($j.Total) checked." ([Drawing.Color]::FromArgb(150, 90, 0)) }
-        else { Set-AppStatus "Scanning $($j.Done) of $($j.Total)..." }
-        return
+    try {
+        $j = $script:scanJob
+        if (-not $j) { $script:scanTimer.Stop(); return }
+        $scanBar.Value = [math]::Min($j.Done, $scanBar.Maximum)
+        if (-not $j.IsCompleted) {
+            if ($scanCount) { $scanCount.Text = "$($j.Done) / $($j.Total)" }
+            if ($j.IsCancelled) { Set-AppStatus "Stopping scan... $($j.Done) of $($j.Total) checked." ([Drawing.Color]::FromArgb(150, 90, 0)) }
+            else { Set-AppStatus "Scanning $($j.Done) of $($j.Total)..." }
+            return
+        }
+        Complete-ManualScan $j
+    } catch {
+        try { $script:scanTimer.Stop() } catch { }
+        $script:scanJob = $null
+        try { Set-ScanControlsRunning $false } catch { }
+        $msg = $_.Exception.Message
+        try { Set-AppStatus "Scan failed: $msg" ([Drawing.Color]::Firebrick) } catch { }
+        try { Msg $msg 'Error' } catch { }
     }
-    Complete-ManualScan $j
 })
 
 # ================================================================== AUTOMATE TAB
@@ -690,13 +1153,23 @@ foreach ($pg in @($pSet,$pSch,$pTip)) { [void]$sub.TabPages.Add($pg) }
 $A.Controls.Add($sub)
 
 # --- Run once now bar (top)
-$top = New-Object Windows.Forms.Panel -Property @{ Dock = 'Top'; Height = 140; BorderStyle = 'FixedSingle'; BackColor = [Drawing.Color]::FromArgb(240, 247, 255) }
+$top = New-Object Windows.Forms.Panel -Property @{ Dock = 'Top'; Height = 118; BorderStyle = 'FixedSingle'; BackColor = [Drawing.Color]::FromArgb(240, 247, 255) }
 $A.Controls.Add($top)
-$autoBanner = New-Object Windows.Forms.Panel -Property @{ Dock = 'Top'; Height = 28; BackColor = [Drawing.Color]::FromArgb(255, 248, 230) }
-$autoBannerFlow = New-Object Windows.Forms.FlowLayoutPanel -Property @{ Dock = 'Fill'; WrapContents = $false; Padding = '6,4,6,0' }
-[void]$autoBannerFlow.Controls.Add((New-Object Windows.Forms.Label -Property @{ Text = 'Beta: this tab is still in development. Feedback is welcome.'; AutoSize = $true; Margin = '0,2,12,0'; ForeColor = [Drawing.Color]::FromArgb(90, 70, 20) }))
-$lnkFeedback = New-Object Windows.Forms.LinkLabel -Property @{ Text = 'Send feedback'; AutoSize = $true; Margin = '0,2,12,0'; LinkColor = [Drawing.Color]::FromArgb(0, 102, 184) }
-$lnkGithubIssue = New-Object Windows.Forms.LinkLabel -Property @{ Text = 'Report on GitHub'; AutoSize = $true; Margin = '0,2,0,0'; LinkColor = [Drawing.Color]::FromArgb(0, 102, 184) }
+$autoBanner = New-Object Windows.Forms.Panel -Property @{ Dock = 'Top'; Height = 36; BackColor = [Drawing.Color]::White }
+$autoBannerFlow = New-Object Windows.Forms.FlowLayoutPanel -Property @{ Dock = 'Fill'; WrapContents = $true; Padding = '6,4,6,0' }
+$expArgb = Get-QmAutomateExperimentalArgb
+$autoExpLabel = New-Object Windows.Forms.Label -Property @{
+    Text = (Get-QmAutomateExperimentalBanner)
+    AutoSize = $true
+    Margin = '0,2,16,0'
+    ForeColor = [Drawing.Color]::FromArgb([int]$expArgb[0], [int]$expArgb[1], [int]$expArgb[2])
+    BackColor = [Drawing.Color]::White
+    Font = $fontBold
+}
+Set-Acc $autoExpLabel (Get-QmAutomateExperimentalBanner)
+[void]$autoBannerFlow.Controls.Add($autoExpLabel)
+$lnkFeedback = New-Object Windows.Forms.LinkLabel -Property @{ Text = 'Send feedback'; AutoSize = $true; Margin = '0,2,12,0'; LinkColor = [Drawing.Color]::FromArgb(0, 102, 184); LinkBehavior = 'AlwaysUnderline' }
+$lnkGithubIssue = New-Object Windows.Forms.LinkLabel -Property @{ Text = 'Report on GitHub'; AutoSize = $true; Margin = '0,2,0,0'; LinkColor = [Drawing.Color]::FromArgb(0, 102, 184); LinkBehavior = 'AlwaysUnderline' }
 $lnkFeedback.Add_LinkClicked({ try { Start-Process (Get-QmFeedbackMailto) } catch { Msg $_.Exception.Message 'Error' } })
 $lnkGithubIssue.Add_LinkClicked({ try { Start-Process (Get-QmFeedbackIssuesUrl) } catch { Msg $_.Exception.Message 'Error' } })
 [void]$autoBannerFlow.Controls.Add($lnkFeedback)
@@ -706,16 +1179,25 @@ $A.Controls.Add($autoBanner)
 $sub.BringToFront()
 $runOnce = New-B $top 'Run once now' 10 10 180 56
 $runOnce.Font = New-Object Drawing.Font('Segoe UI', 12, [Drawing.FontStyle]::Bold)
-$runOnce.BackColor = [Drawing.Color]::FromArgb(46, 125, 50); $runOnce.ForeColor = 'White'; $runOnce.FlatStyle = 'Flat'
-(New-L $top "Runs the full automated meter`nreport one time with the saved`nsettings (same as a scheduled run)." 10 70).ForeColor = 'DimGray'
-$runBar = Add-C $top (New-Object Windows.Forms.ProgressBar -Property @{ Location = '205,10'; Size = '600,22'; Anchor = 'Top,Left,Right' })
-$runStatus = New-L $top 'Ready. Save your settings, then click Run once now to test.' 205 38
+$pri = Get-QmPrimaryButtonArgb
+$runOnce.BackColor = [Drawing.Color]::FromArgb([int]$pri[0], [int]$pri[1], [int]$pri[2])
+$runOnce.ForeColor = [Drawing.Color]::White
+$runOnce.FlatStyle = 'Flat'
+$runOnce.FlatAppearance.BorderSize = 0
+$runOnce.UseVisualStyleBackColor = $false
+(New-L $top "Runs the full automated meter report one time with the saved settings (same as a scheduled run)." 10 70).AutoSize = $true
+$runOnceHelp = $top.Controls[$top.Controls.Count - 1]
+$runOnceHelp.ForeColor = 'DimGray'
+$runOnceHelp.MaximumSize = New-Object Drawing.Size(190, 40)
+$runBar = Add-C $top (New-Object Windows.Forms.ProgressBar -Property @{ Location = '205,8'; Size = '430,18'; Anchor = 'Top,Left,Right' })
+$runStatus = New-L $top (Get-QmRunOnceEmptyCaption) 205 28
 $runStatus.Font = $fontBold
-$lnkOut = Add-C $top (New-Object Windows.Forms.LinkLabel -Property @{ Text = 'Open output folder'; Location = '820,12'; AutoSize = $true; Anchor = 'Top,Right' })
-$lnkLog = Add-C $top (New-Object Windows.Forms.LinkLabel -Property @{ Text = 'Open last log'; Location = '820,32'; AutoSize = $true; Anchor = 'Top,Right' })
-$lnkSt  = Add-C $top (New-Object Windows.Forms.LinkLabel -Property @{ Text = 'Last run details'; Location = '930,12'; AutoSize = $true; Anchor = 'Top,Right' })
-$lnkMps = Add-C $top (New-Object Windows.Forms.LinkLabel -Property @{ Text = 'Open MPS folder'; Location = '930,32'; AutoSize = $true; Anchor = 'Top,Right' })
-$runLog = Add-C $top (New-Object Windows.Forms.TextBox -Property @{ Location = '205,58'; Size = '835,74'; Multiline = $true; ReadOnly = $true; ScrollBars = 'Both'; Font = $fontMono; Anchor = 'Top,Left,Right'; Text = 'No runs yet.' })
+$runStatus.Anchor = 'Top,Left,Right'
+$lnkOut = Add-C $top (New-Object Windows.Forms.LinkLabel -Property @{ Text = 'Open output folder'; Location = '650,8'; AutoSize = $true; Anchor = 'Top,Right'; LinkBehavior = 'AlwaysUnderline' })
+$lnkLog = Add-C $top (New-Object Windows.Forms.LinkLabel -Property @{ Text = 'Open last log'; Location = '650,26'; AutoSize = $true; Anchor = 'Top,Right'; LinkBehavior = 'AlwaysUnderline' })
+$lnkSt  = Add-C $top (New-Object Windows.Forms.LinkLabel -Property @{ Text = 'Last run details'; Location = '780,8'; AutoSize = $true; Anchor = 'Top,Right'; LinkBehavior = 'AlwaysUnderline' })
+$lnkMps = Add-C $top (New-Object Windows.Forms.LinkLabel -Property @{ Text = 'Open MPS folder'; Location = '780,26'; AutoSize = $true; Anchor = 'Top,Right'; LinkBehavior = 'AlwaysUnderline' })
+$runLog = Add-C $top (New-Object Windows.Forms.TextBox -Property @{ Location = '205,52'; Size = '720,54'; Multiline = $true; ReadOnly = $true; ScrollBars = 'Vertical'; Font = $fontMono; Anchor = 'Top,Left,Right'; Text = 'No runs yet.' })
 Set-Acc $runOnce 'Run once now'
 Set-Acc $runBar 'Run once progress'
 Set-Acc $runStatus 'Run once status'
@@ -727,20 +1209,7 @@ Set-Acc $lnkMps 'Open MPS folder'
 
 # --- Settings sub-tab
 $setBottom = Add-C $pSet (New-Object Windows.Forms.Panel -Property @{ Dock = 'Bottom'; Height = 48 })
-$S = Add-C $pSet (New-Object Windows.Forms.Panel -Property @{ Dock = 'Fill'; AutoScroll = $true; AutoScrollMinSize = New-Object Drawing.Size(900, 620) })
-New-L $S 'Printers to read (IPs, ranges, CIDR; one per line):' 10 10 | Out-Null
-$aTargets = Add-C $S (New-Object Windows.Forms.TextBox -Property @{ Location = '10,30'; Size = '400,170'; Multiline = $true; ScrollBars = 'Both'; WordWrap = $false; AcceptsReturn = $true; Font = $fontMono })
-Set-Acc $aTargets 'Printers to read'
-$aCopy = New-B $S 'Copy list from Manual tab' 10 205 180 26
-Set-Acc $aCopy 'Copy list from Manual tab'
-$aUseManual = New-B $S 'Use Manual tab settings' 195 205 165 26
-Set-Acc $aUseManual 'Use Manual tab settings'
-$aLoad = New-B $S 'Load list...' 365 205 100 26
-Set-Acc $aLoad 'Load printer list'
-$x2 = 480
-$snmpTlp = Add-C $S (New-Object Windows.Forms.TableLayoutPanel -Property @{ Location = "$x2,20"; Size = '400,200'; ColumnCount = 2; RowCount = 6 })
-[void]$snmpTlp.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle([Windows.Forms.SizeType]::Absolute, 130)))
-[void]$snmpTlp.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle([Windows.Forms.SizeType]::Percent, 100)))
+$S = Add-C $pSet (New-Object Windows.Forms.Panel -Property @{ Dock = 'Fill'; AutoScroll = $true; AutoScrollMinSize = New-Object Drawing.Size(840, 520) })
 function Add-TlpRow($tlp, $row, $label, $ctl) {
     $ctl.Dock = 'Fill'
     [void]$tlp.RowStyles.Add((New-Object Windows.Forms.RowStyle([Windows.Forms.SizeType]::Absolute, 30)))
@@ -750,6 +1219,32 @@ function Add-TlpRow($tlp, $row, $label, $ctl) {
     $label.TextAlign = 'MiddleLeft'
     $label.AutoSize = $true
 }
+
+$settingsGrid = Add-C $S (New-Object Windows.Forms.TableLayoutPanel -Property @{ Location = '10,10'; ColumnCount = 2; RowCount = 2; Width = 980; AutoSize = $true })
+[void]$settingsGrid.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle([Windows.Forms.SizeType]::Percent, 55)))
+[void]$settingsGrid.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle([Windows.Forms.SizeType]::Percent, 45)))
+[void]$settingsGrid.RowStyles.Add((New-Object Windows.Forms.RowStyle([Windows.Forms.SizeType]::Absolute, 250)))
+[void]$settingsGrid.RowStyles.Add((New-Object Windows.Forms.RowStyle([Windows.Forms.SizeType]::AutoSize)))
+
+$printersBox = New-Object Windows.Forms.GroupBox -Property @{ Text = 'Printers'; Dock = 'Fill'; Padding = '8,8,8,8' }
+$aTargets = Add-C $printersBox (New-Object Windows.Forms.TextBox -Property @{ Location = '10,32'; Size = '400,150'; Multiline = $true; ScrollBars = 'Vertical'; WordWrap = $false; AcceptsReturn = $true; Font = $fontMono; Anchor = 'Top,Left,Right,Bottom' })
+Set-Acc $aTargets 'Printers to read'
+(New-L $printersBox 'Printers to read (IPs, ranges, CIDR; one per line):' 10 16) | Out-Null
+$aCopy = New-B $printersBox 'Copy list from Manual tab' 10 188 180 26
+$aCopy.Anchor = 'Bottom,Left'
+Set-Acc $aCopy 'Copy list from Manual tab'
+$aUseManual = New-B $printersBox 'Use Manual tab settings' 195 188 165 26
+$aUseManual.Anchor = 'Bottom,Left'
+Set-Acc $aUseManual 'Use Manual tab settings'
+$aLoad = New-B $printersBox 'Load list...' 365 188 100 26
+$aLoad.Anchor = 'Bottom,Left'
+Set-Acc $aLoad 'Load printer list'
+$settingsGrid.Controls.Add($printersBox, 0, 0)
+
+$connBox = New-Object Windows.Forms.GroupBox -Property @{ Text = 'Connection'; Dock = 'Fill'; Padding = '8,8,8,8' }
+$snmpTlp = Add-C $connBox (New-Object Windows.Forms.TableLayoutPanel -Property @{ Dock = 'Fill'; ColumnCount = 2; RowCount = 6; Padding = '6,16,6,6' })
+[void]$snmpTlp.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle([Windows.Forms.SizeType]::Absolute, 140)))
+[void]$snmpTlp.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle([Windows.Forms.SizeType]::Percent, 100)))
 $aComm = New-Object Windows.Forms.TextBox
 $aVer = New-Object Windows.Forms.ComboBox -Property @{ DropDownStyle = 'DropDownList' }
 [void]$aVer.Items.AddRange(@('v2c','v1')); $aVer.SelectedItem = 'v2c'
@@ -764,8 +1259,10 @@ Add-TlpRow $snmpTlp 3 (New-Object Windows.Forms.Label -Property @{ Text = '&Time
 Add-TlpRow $snmpTlp 4 (New-Object Windows.Forms.Label -Property @{ Text = '&Retries'; AutoSize = $true }) $aRetries
 Add-TlpRow $snmpTlp 5 (New-Object Windows.Forms.Label -Property @{ Text = 'P&arallel queries'; AutoSize = $true }) $aConc
 Set-Acc $aComm 'Community'; Set-Acc $aVer 'SNMP version'; Set-Acc $aPort 'Port'; Set-Acc $aTimeout 'Timeout (ms)'; Set-Acc $aRetries 'Retries'; Set-Acc $aConc 'Parallel queries'
+$settingsGrid.Controls.Add($connBox, 1, 0)
 
-$pathTlp = Add-C $S (New-Object Windows.Forms.TableLayoutPanel -Property @{ Location = '10,245'; Size = '860, 330'; ColumnCount = 4; AutoSize = $true })
+$filesBox = New-Object Windows.Forms.GroupBox -Property @{ Text = 'Files'; Dock = 'Fill'; AutoSize = $true; Padding = '8,8,8,8' }
+$pathTlp = Add-C $filesBox (New-Object Windows.Forms.TableLayoutPanel -Property @{ Dock = 'Top'; AutoSize = $true; ColumnCount = 4; Padding = '6,16,6,6' })
 [void]$pathTlp.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle([Windows.Forms.SizeType]::Absolute, 200)))
 [void]$pathTlp.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle([Windows.Forms.SizeType]::Percent, 100)))
 [void]$pathTlp.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle([Windows.Forms.SizeType]::Absolute, 80)))
@@ -784,14 +1281,20 @@ $aFmt = New-Object Windows.Forms.ComboBox -Property @{ DropDownStyle = 'DropDown
 $aSrc = New-Object Windows.Forms.TextBox
 $aRemarks = New-Object Windows.Forms.TextBox
 $aRemarks.Text = $initialRemarks
-$aExcludeNoSerial = New-Object Windows.Forms.CheckBox -Property @{ Text = "Don't include printers with no serial number in exports"; AutoSize = $true }
-if ($excludeNoSerial.Checked) { $aExcludeNoSerial.Checked = $true }
+$aExcludeNoSerial = New-Object Windows.Forms.CheckBox -Property @{ Text = 'Only show/include devices that are reporting serial numbers(Usually Only Printers)'; AutoSize = $false }
+$aExcludeNoSerial.Checked = [bool]$excludeNoSerial.Checked
 $aMap = New-Object Windows.Forms.TextBox
 $bMap = New-Object Windows.Forms.Button -Property @{ Text = 'Browse...' }
 $bMapEdit = New-Object Windows.Forms.Button -Property @{ Text = 'Edit mapping...' }
 
 $r = 0
 Add-PathStyle $pathTlp
+$pathTlp.Controls.Add((New-Object Windows.Forms.Label -Property @{ Text = '&Meter remarks'; AutoSize = $true; Anchor = 'Left' }), 0, $r)
+$pathTlp.Controls.Add($aRemarks, 1, $r); $aRemarks.Dock = 'Fill'; $pathTlp.SetColumnSpan($aRemarks, 3)
+$r++; [void]$pathTlp.RowStyles.Add((New-Object Windows.Forms.RowStyle([Windows.Forms.SizeType]::Absolute, 44)))
+$pathTlp.Controls.Add($aExcludeNoSerial, 0, $r); $pathTlp.SetColumnSpan($aExcludeNoSerial, 4)
+$aExcludeNoSerial.Dock = 'Fill'
+$r++; Add-PathStyle $pathTlp
 $pathTlp.Controls.Add((New-Object Windows.Forms.Label -Property @{ Text = '&Output folder'; AutoSize = $true; Anchor = 'Left' }), 0, $r)
 $pathTlp.Controls.Add($aOut, 1, $r); $aOut.Dock = 'Fill'
 $pathTlp.Controls.Add($bOut, 2, $r)
@@ -819,20 +1322,20 @@ $r++; Add-PathStyle $pathTlp
 $pathTlp.Controls.Add((New-Object Windows.Forms.Label -Property @{ Text = 'Meter source (Lists and Codes)'; AutoSize = $true; Anchor = 'Left' }), 0, $r)
 $pathTlp.Controls.Add($aSrc, 1, $r); $aSrc.Dock = 'Fill'
 $r++; Add-PathStyle $pathTlp
-$pathTlp.Controls.Add((New-Object Windows.Forms.Label -Property @{ Text = '&Meter remarks'; AutoSize = $true; Anchor = 'Left' }), 0, $r)
-$pathTlp.Controls.Add($aRemarks, 1, $r); $aRemarks.Dock = 'Fill'; $pathTlp.SetColumnSpan($aRemarks, 3)
-$r++; Add-PathStyle $pathTlp
-$pathTlp.Controls.Add($aExcludeNoSerial, 0, $r); $pathTlp.SetColumnSpan($aExcludeNoSerial, 4)
-$r++; Add-PathStyle $pathTlp
 $pathTlp.Controls.Add((New-Object Windows.Forms.Label -Property @{ Text = 'Mappin&g file'; AutoSize = $true; Anchor = 'Left' }), 0, $r)
 $pathTlp.Controls.Add($aMap, 1, $r); $aMap.Dock = 'Fill'
 $pathTlp.Controls.Add($bMap, 2, $r)
 $pathTlp.Controls.Add($bMapEdit, 3, $r)
 Set-Acc $aOut 'Output folder'; Set-Acc $aMps 'MPS drop folder'; Set-Acc $aLogF 'Log folder'
 Set-Acc $aRet 'Keep files (days)'; Set-Acc $aFmt 'e-automate format'; Set-Acc $aSrc 'Meter source'
-Set-Acc $aRemarks 'Meter remarks'; Set-Acc $aExcludeNoSerial 'Hide printers with no serial number in exports'
+Set-Acc $aRemarks 'Meter remarks'; Set-Acc $aExcludeNoSerial 'Only show/include devices that are reporting serial numbers(Usually Only Printers)'
 Set-Acc $aMap 'Mapping file'; Set-Acc $bMapEdit 'Edit mapping'
 Set-Acc $aOutPath 'Resolved output folder'; Set-Acc $aMpsPath 'Resolved MPS drop folder'; Set-Acc $aLogPath 'Resolved log folder'
+$settingsGrid.Controls.Add($filesBox, 0, 1)
+$settingsGrid.SetColumnSpan($filesBox, 2)
+$S.Add_Resize({
+    try { $settingsGrid.Width = [math]::Max(700, $S.ClientSize.Width - 24) } catch { }
+})
 
 $aSave = New-B $setBottom 'Save settings' 10 8 140 32
 $aSave.Font = $fontBold
@@ -871,37 +1374,41 @@ $sRefresh = New-B $H 'Refresh status' 310 242 110 32
 $sAdmin = New-B $H 'Restart QuMeter as administrator' 425 242 230 32
 $sAdmin.Visible = $false
 Set-Acc $sInstall 'Install or update task'; Set-Acc $sRemove 'Remove task'; Set-Acc $sRefresh 'Refresh status'; Set-Acc $sAdmin 'Restart QuMeter as administrator'
-$sStatus = Add-C $H (New-Object Windows.Forms.TextBox -Property @{ Location = '10,286'; Size = '1010,220'; Multiline = $true; ReadOnly = $true; ScrollBars = 'Vertical'; Font = $fontMono; Anchor = 'Top,Left,Right' })
+$sStatus = Add-C $H (New-Object Windows.Forms.TextBox -Property @{ Location = '10,286'; Size = '1010,72'; Multiline = $true; ReadOnly = $true; ScrollBars = 'Vertical'; Font = $f.Font; Anchor = 'Top,Left,Right' })
 Set-Acc $sStatus 'Task status'
 
 # --- Tips sub-tab
 $autoTips = @"
-TIPS - AUTOMATE
+Tips - Automate
 
-WHAT IT DOES
+This tab is experimental
+The Automate (Experimental) tab is experimental and requires further testing. A red notice at the top of this tab says so. Confirm scheduled output before you rely on it.
+
+What it does
 Each run (scheduled, or Run once now) reads every printer over SNMP and writes, with a date/time stamp:
-  QuMeter_<stamp>.csv		general results for every address (records)
+  QuMeter_<stamp>.csv	general results for every address (records)
   QuMeter_eautomate_<stamp>.csv	e-automate meter import rows (OK + serial only)
   QuMeter_mps_<stamp>.csv	optional, into the MPS drop folder
   logs\QuMeter_<date>.log	what happened, per printer
-  logs\status.json		run status the GUI reads (success, per-printer errors, files, write errors)
+  logs\status.json	run status the GUI reads (success, per-printer errors, files, write errors)
 Files older than "Keep files" days are deleted from the output and log folders (never from the MPS folder).
 
-GETTING METERS INTO E-AUTOMATE
+Getting meters into e-automate
 e-automate matches each row to equipment by Model + Serial. Equipment Number is left blank.
 Scheduled runs write a CSV. To import it, paste its rows into the official EA_MeterImport.xlsx template (the utility accepts .xlsx only). Open the template, set Source (must already exist in Lists and Codes; not Contract, Service Call or Web), paste the e-automate CSV rows under the headers on row 8, and run the import.
-Meter remarks come from the Meter remarks box on this Settings tab (default Imported by QuMeter). Leave it empty for a blank remarks field. Optional tokens, replaced per printer: {date} {time} {ip} {serial} {model}. Check "Don't include printers with no serial number in exports" to leave printers with a blank or placeholder serial (N/A, unknown, 0) out of the general, e-automate, and MPS files. Click Save settings so scheduled QuMeter Auto runs use the remarks and this checkbox (they are stored in config.json).
+Meter remarks come from the Meter remarks box on this Settings tab (default Imported by QuMeter). Leave it empty for a blank remarks field. Optional tokens, replaced per printer: {date} {time} {ip} {serial} {model}. The "Only show/include devices that are reporting serial numbers(Usually Only Printers)" box is checked by default and is the same setting as on the Manual tab. When it is checked, devices with a blank or placeholder serial (N/A, unknown, 0) are left out of the general, e-automate, and MPS files. Click Save settings so scheduled QuMeter Auto runs use the remarks and this checkbox (they are stored in config.json).
 
-OUTPUT TO A NETWORK SHARE
+Output to a network share
 Output and MPS folders can be UNC paths like \\fileserver\meters so files land where you and e-automate can reach them.
 If the task runs as SYSTEM it uses the computer account (e.g. SERVER$) on the network. SYSTEM can't write to a share unless that computer account has write rights on the share and folder. For UNC output, a domain service account with write access is recommended (Run as > Service account). Relative folders are resolved from the QuMeter app folder (Saves to: shows the full path). If the task runs as SYSTEM, confirm that account can write there.
 
-THIS PC (Schedule tab)
+This PC (Schedule tab)
 Install / Update creates the Windows task "QuMeter Auto". Current user = no admin needed but only while logged on. SYSTEM / service account = runs with nobody logged on (admin needed to install).
 
-ERRORS
+Errors
 Anything that goes wrong is shown on Run once now and in Last run details: printers timing out, files that couldn't be written, or bad settings. The Schedule tab also shows the task's last/next run and result.
 "@
+
 New-Tips $pTip $autoTips 6 6 1020 470 'Top,Bottom,Left,Right' | Out-Null
 $pTip.Add_Resize({ $pTip.Controls[0].Size = "$($pTip.ClientSize.Width - 12),$($pTip.ClientSize.Height - 12)" })
 
@@ -921,10 +1428,23 @@ function Update-PathLabels {
 }
 function Update-RunOnceEnabled {
     if ($script:runProc) { $runOnce.Enabled = $false; return }
-    $n = 0
-    if ($script:cfg -and $script:cfg.targets) { $n = @($script:cfg.targets | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }).Count }
-    $runOnce.Enabled = $n -gt 0
-    $uiTip.SetToolTip($runOnce, $(if ($n -eq 0) { 'Add printers on the Settings tab and click Save settings, then Run once now.' } else { 'Runs the full automated meter report one time with the saved settings (same as a scheduled run).' }))
+    $savedTargets = @()
+    if ($script:cfg -and $script:cfg.targets) { $savedTargets = @($script:cfg.targets) }
+    $can = Test-QmRunOnceCanRun -SavedTargets $savedTargets -Running:$false
+    $runOnce.Enabled = $can
+    $emptyCaption = Get-QmRunOnceEmptyCaption
+    if (-not $can) {
+        $runStatus.Text = $emptyCaption
+        $runStatus.ForeColor = [Drawing.SystemColors]::ControlText
+        $uiTip.SetToolTip($runOnce, $emptyCaption)
+        Set-AppStatus $emptyCaption $null 'auto'
+    } else {
+        $uiTip.SetToolTip($runOnce, 'Runs the full automated meter report one time with the saved settings (same as a scheduled run).')
+        if ([string]::IsNullOrWhiteSpace($runStatus.Text) -or $runStatus.Text -eq $emptyCaption) {
+            $runStatus.Text = 'Ready. Save your settings, then click Run once now to test.'
+        }
+        Set-AppStatus $runStatus.Text $null 'auto'
+    }
 }
 function Set-CfgDirty([bool]$dirty) {
     if ($script:cfgLoading) { return }
@@ -1092,17 +1612,23 @@ function Read-ProgressLines {
 }
 $script:runTimer = New-Object Windows.Forms.Timer -Property @{ Interval = 300 }
 $script:runTimer.Add_Tick({
-    try { Read-ProgressLines } catch { }
-    if ($script:runProc -and $script:runProc.HasExited) {
-        $script:runTimer.Stop()
+    try {
         try { Read-ProgressLines } catch { }
-        $code = $script:runProc.ExitCode
-        $script:runProc = $null
-        Update-RunOnceEnabled
-        if ($runBar.Value -lt $runBar.Maximum -and $code -eq 0) { $runBar.Value = $runBar.Maximum }
-        Show-LocalResult
-        Update-LastRunLinks
-        Remove-Item -LiteralPath $script:runProgFile -Force -ErrorAction SilentlyContinue
+        if ($script:runProc -and $script:runProc.HasExited) {
+            $script:runTimer.Stop()
+            try { Read-ProgressLines } catch { }
+            $code = $script:runProc.ExitCode
+            $script:runProc = $null
+            Update-RunOnceEnabled
+            if ($runBar.Value -lt $runBar.Maximum -and $code -eq 0) { $runBar.Value = $runBar.Maximum }
+            Show-LocalResult
+            Update-LastRunLinks
+            Remove-Item -LiteralPath $script:runProgFile -Force -ErrorAction SilentlyContinue
+        }
+    } catch {
+        try { $script:runTimer.Stop() } catch { }
+        try { Set-AppStatus "Run failed: $($_.Exception.Message)" ([Drawing.Color]::Firebrick) } catch { }
+        try { Msg $_.Exception.Message 'Error' } catch { }
     }
 })
 $lnkOut.Add_LinkClicked({ $p = Get-LocalFolder 'outputFolder'; if ($p -and (Test-Path -LiteralPath $p)) { Start-Process explorer.exe -ArgumentList "`"$p`"" } else { Msg "Output folder doesn't exist yet: $p" } })
@@ -1180,7 +1706,7 @@ if ($script:importNote) { $aValid.ForeColor = 'DarkOrange' }
 if (Test-Path -LiteralPath $configPath) {
     try {
         if (Read-LocalStatus) { Show-LocalResult }
-        else { $runStatus.ForeColor = 'Black'; $runStatus.Text = 'Ready. Save your settings, then click Run once now to test.'; $runLog.Text = 'No runs yet.' }
+        else { $runStatus.ForeColor = 'Black'; $runStatus.Text = (Get-QmRunOnceEmptyCaption); $runLog.Text = 'No runs yet.'; Update-RunOnceEnabled }
     } catch { }
 } else {
     $runLog.Text = 'No runs yet.'
@@ -1188,6 +1714,9 @@ if (Test-Path -LiteralPath $configPath) {
 Show-LocalTask
 Update-LastRunLinks
 Update-ExportButtons
+Update-RunOnceEnabled
+$tabs.Add_SelectedIndexChanged({ Show-ActiveTabStatus })
+Show-ActiveTabStatus
 function Stop-QmBackgroundUpdateCheck {
     foreach ($tm in @($script:updateTimer, $script:updatePoll)) { if ($tm) { try { $tm.Stop() } catch { } } }
     if ($script:updatePs) {
@@ -1253,18 +1782,22 @@ function Start-QmBackgroundUpdateCheck {
     $script:updateHandle = $script:updatePs.BeginInvoke()
     $script:updatePoll = New-Object Windows.Forms.Timer -Property @{ Interval = 250 }
     $script:updatePoll.Add_Tick({
-        if (-not $script:updateHandle -or -not $script:updateHandle.IsCompleted) { return }
-        $script:updatePoll.Stop()
-        $rel = $null
         try {
-            $out = $script:updatePs.EndInvoke($script:updateHandle)
-            if ($out) { $rel = @($out)[-1] }
-        } catch { $rel = $null }
-        Stop-QmBackgroundUpdateCheck
-        if ($rel -and $rel.Version) {
+            if (-not $script:updateHandle -or -not $script:updateHandle.IsCompleted) { return }
+            $script:updatePoll.Stop()
+            $rel = $null
             try {
-                if ((Compare-QmVersion (Get-QmVersion) $rel.Version) -lt 0) { Show-QmUpdatePrompt $rel }
-            } catch { }
+                $out = $script:updatePs.EndInvoke($script:updateHandle)
+                if ($out) { $rel = @($out)[-1] }
+            } catch { $rel = $null }
+            Stop-QmBackgroundUpdateCheck
+            if ($rel -and $rel.Version) {
+                try {
+                    if ((Compare-QmVersion (Get-QmVersion) $rel.Version) -lt 0) { Show-QmUpdatePrompt $rel }
+                } catch { }
+            }
+        } catch {
+            try { $script:updatePoll.Stop() } catch { }
         }
     })
     $script:updatePoll.Start()
@@ -1273,8 +1806,12 @@ $pubUpdate.Add_Click({ Show-QmUpdateCheck })
 $f.Add_Shown({
     $script:updateTimer = New-Object Windows.Forms.Timer -Property @{ Interval = 800 }
     $script:updateTimer.Add_Tick({
-        $script:updateTimer.Stop()
-        Start-QmBackgroundUpdateCheck
+        try {
+            $script:updateTimer.Stop()
+            Start-QmBackgroundUpdateCheck
+        } catch {
+            try { $script:updateTimer.Stop() } catch { }
+        }
     })
     $script:updateTimer.Start()
 })
@@ -1283,7 +1820,15 @@ $f.Add_FormClosing({
     if ($script:scanJob -and -not $script:scanJob.IsCompleted) {
         try { $script:scanJob.Cancel(); [void]$script:scanJob.Wait(3000) } catch { }
     }
-    foreach ($tm in @($script:scanTimer, $script:runTimer, $script:updateTimer, $script:updatePoll)) { if ($tm) { try { $tm.Stop() } catch { } } }
+    foreach ($tm in @($script:scanTimer, $script:runTimer, $script:updateTimer, $script:updatePoll, $script:gridSelTimer)) { if ($tm) { try { $tm.Stop() } catch { } } }
     Stop-QmBackgroundUpdateCheck
+    if (-not $_.Cancel) {
+        try {
+            Set-AppStatus 'Thank you for using QuMeter by QuSpace Studios'
+            if ($pubBar) { $pubBar.Refresh() }
+            $f.Update()
+        } catch { }
+    }
 })
+try { Restore-MpsImport } catch { }
 [void]$f.ShowDialog()

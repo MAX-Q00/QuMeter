@@ -8,13 +8,13 @@ $script:QmUpdateApiTimeoutMs = 5000
 $script:QmUpdateDownloadTimeoutMs = 60000
 
 function Get-QmAppPayloadFiles {
-    # Files the updater replaces. User data (settings.json, config.json, devices.txt, output, logs) is left alone.
+    # Files the updater replaces. User data (settings.json, config.json, devices.txt, mps-import.json, output, logs) is left alone.
     # e-automate.mapping.json is only copied when the install does not already have one.
     @('QuMeter.bat', 'QuMeter.ps1', 'QuMeterCore.ps1', 'QuMeterEngine.ps1', 'QuMeterUpdate.ps1', 'QuSnmp.cs', 'QuSnmp.ps1', 'README.md')
 }
 
 function Get-QmUserDataFileNames {
-    @('settings.json', 'config.json', 'devices.txt')
+    @('settings.json', 'config.json', 'devices.txt', 'mps-import.json')
 }
 
 function ConvertTo-QmVersion {

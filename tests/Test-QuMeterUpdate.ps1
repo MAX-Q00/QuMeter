@@ -12,12 +12,12 @@ if (Test-Path $tmp) { Remove-Item $tmp -Recurse -Force }
 New-Item -ItemType Directory -Path $tmp -Force | Out-Null
 
 Write-Host '=== Version source of truth ==='
-Assert-Eq (Get-QmVersion) '2.2.2' 'Get-QmVersion reads $script:QmVersion'
+Assert-Eq (Get-QmVersion) '2.2.3' 'Get-QmVersion reads $script:QmVersion'
 Assert-Eq (Get-QmPublisher) 'QuSpace Studios LLC' 'publisher constant'
 Assert-Eq (Get-QmProductName) 'QuMeter' 'product name'
 Assert-True ((Get-QmCopyrightText -Ascii) -match 'QuSpace Studios LLC') 'ASCII copyright mentions publisher'
 Assert-True ((Get-QmFeedbackMailto) -match 'mailto:dylan@quspace.studio') 'feedback mailto uses studio email'
-Assert-True ((Get-QmFeedbackMailto) -match 'QuMeter%20feedback%20%28v2\.2\.2%29') 'mailto subject includes version'
+Assert-True ((Get-QmFeedbackMailto) -match 'QuMeter%20feedback%20%28v2\.2\.3%29') 'mailto subject includes version'
 Assert-Eq (Get-QmFeedbackIssuesUrl) 'https://github.com/MAX-Q00/QuMeter/issues/new' 'GitHub issues URL'
 
 Write-Host '=== Version compare and asset names ==='
@@ -73,11 +73,13 @@ New-Item -ItemType Directory -Path $payload, $appdir -Force | Out-Null
 'OLD-GUI' | Set-Content (Join-Path $appdir 'QuMeter.ps1')
 'USER' | Set-Content (Join-Path $appdir 'settings.json')
 'USERCFG' | Set-Content (Join-Path $appdir 'config.json')
+'IMPORT' | Set-Content (Join-Path $appdir 'mps-import.json')
 $backup = Join-Path $tmp 'backup'
 $null = Install-QmUpdateFiles -SourceDir $payload -AppDir $appdir -BackupDir $backup
 Assert-Eq (Get-Content (Join-Path $appdir 'QuMeterCore.ps1') -Raw).Trim() 'NEW-CORE' 'payload file replaced'
 Assert-Eq (Get-Content (Join-Path $appdir 'settings.json') -Raw).Trim() 'USER' 'settings.json preserved'
 Assert-Eq (Get-Content (Join-Path $appdir 'config.json') -Raw).Trim() 'USERCFG' 'config.json preserved'
+Assert-Eq (Get-Content (Join-Path $appdir 'mps-import.json') -Raw).Trim() 'IMPORT' 'mps-import.json preserved'
 Assert-Eq (Get-Content (Join-Path $backup 'QuMeterCore.ps1') -Raw).Trim() 'OLD-CORE' 'backup kept previous app file'
 
 $wrapped = Join-Path $tmp 'wrapped'
@@ -99,7 +101,8 @@ Assert-True $bad 'hash mismatch throws'
 Write-Host '=== Payload list ==='
 $names = Get-QmAppPayloadFiles
 Assert-True ($names -contains 'QuMeter.ps1' -and $names -contains 'QuMeterUpdate.ps1') 'payload includes GUI and updater'
-Assert-True ($names -notcontains 'settings.json' -and $names -notcontains 'config.json') 'payload does not include user data'
+Assert-True ($names -notcontains 'settings.json' -and $names -notcontains 'config.json' -and $names -notcontains 'mps-import.json') 'payload does not include user data'
+Assert-True ((Get-QmUserDataFileNames) -contains 'mps-import.json') 'user data list includes mps-import.json'
 
 Write-Host ''
 Write-Host "Results: $($script:passed) passed, $($script:failed) failed"
