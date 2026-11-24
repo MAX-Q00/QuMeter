@@ -278,13 +278,9 @@ $leftTable = Add-C $split.Panel1 (New-Object Windows.Forms.TableLayoutPanel -Pro
 [void]$leftTable.RowStyles.Add((New-Object Windows.Forms.RowStyle([Windows.Forms.SizeType]::Percent, 100)))
 [void]$leftTable.RowStyles.Add((New-Object Windows.Forms.RowStyle([Windows.Forms.SizeType]::AutoSize)))
 
-$settingsHost = New-Object Windows.Forms.TableLayoutPanel -Property @{
-    Dock = 'Top'; AutoSize = $true; AutoSizeMode = 'GrowAndShrink'
-    ColumnCount = 1; RowCount = 2; Padding = '0,0,0,0'
+$settingsHost = New-Object Windows.Forms.Panel -Property @{
+    Dock = 'Top'; AutoSize = $false; Height = 360
 }
-[void]$settingsHost.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle([Windows.Forms.SizeType]::Percent, 100)))
-[void]$settingsHost.RowStyles.Add((New-Object Windows.Forms.RowStyle([Windows.Forms.SizeType]::AutoSize)))
-[void]$settingsHost.RowStyles.Add((New-Object Windows.Forms.RowStyle([Windows.Forms.SizeType]::AutoSize)))
 $leftTable.Controls.Add($settingsHost, 0, 0)
 
 $grid = New-Object Windows.Forms.DataGridView -Property @{
@@ -356,8 +352,9 @@ Set-Acc $concurrency 'Parallel queries'
 [void]$settingsFlow.Controls.Add((New-FlowField 'P&arallel queries' $concurrency 60))
 
 $M = New-Object Windows.Forms.Panel -Property @{ Dock = 'Top'; Height = 300 }
-$settingsHost.Controls.Add($M, 0, 0)
-$settingsHost.Controls.Add($settingsFlow, 0, 1)
+# Add the SNMP row first so the later Dock=Top of $M sits above it.
+[void]$settingsHost.Controls.Add($settingsFlow)
+[void]$settingsHost.Controls.Add($M)
 $scanCol = Add-C $M (New-Object Windows.Forms.Panel -Property @{ Dock = 'Right'; Width = 150 })
 New-L $M 'Printer &IPs, ranges, or CIDR (one per line or comma-separated)' 10 6 | Out-Null
 $targets = Add-C $M (New-Object Windows.Forms.TextBox -Property @{ Location = '10,24'; Size = '520,72'; Multiline = $true; ScrollBars = 'Vertical'; WordWrap = $false; AcceptsReturn = $true; Font = $fontMono })
@@ -488,13 +485,36 @@ function Fit-FilterCheckboxes {
     if ($responded) { $need = $responded.Bottom + 8 }
     if ($M.Height -ne $need) { $M.Height = [math]::Max(220, $need) }
 }
+function Update-SettingsHostHeight {
+    if (-not $settingsHost -or -not $M -or -not $settingsFlow) { return }
+    $fw = 0
+    try { $fw = $settingsHost.ClientSize.Width } catch { }
+    if ($fw -lt 100 -and $split) { try { $fw = $split.Panel1.ClientSize.Width } catch { } }
+    if ($fw -lt 100) { $fw = 700 }
+    $fh = 36
+    try {
+        $ps = $settingsFlow.GetPreferredSize((New-Object Drawing.Size($fw, 0)))
+        if ($ps.Height -gt 0) { $fh = [int]$ps.Height }
+    } catch {
+        try { $fh = [int]$settingsFlow.PreferredSize.Height } catch { }
+    }
+    if ($fh -lt 32) { $fh = 32 }
+    if ($fh -gt 110) { $fh = 110 }
+    $want = [int]$M.Height + $fh
+    if ($settingsHost.Height -ne $want) { $settingsHost.Height = $want }
+}
 function Layout-ManualFields {
-    $fieldW = [math]::Max(220, $M.ClientSize.Width - $scanCol.Width - 20)
-    $targets.Width = $fieldW
-    $responded.Width = $fieldW
-    $remarks.Width = [math]::Max(160, $fieldW - 100)
-    if ($customerFilter) { $customerFilter.Width = [math]::Max(160, $fieldW - 68) }
-    Fit-FilterCheckboxes
+    if ($script:layoutBusy) { return }
+    $script:layoutBusy = $true
+    try {
+        $fieldW = [math]::Max(220, $M.ClientSize.Width - $scanCol.Width - 20)
+        $targets.Width = $fieldW
+        $responded.Width = $fieldW
+        $remarks.Width = [math]::Max(160, $fieldW - 100)
+        if ($customerFilter) { $customerFilter.Width = [math]::Max(160, $fieldW - 68) }
+        Fit-FilterCheckboxes
+        Update-SettingsHostHeight
+    } finally { $script:layoutBusy = $false }
 }
 $M.Add_Resize({ Layout-ManualFields })
 $settingsHost.Add_Resize({ Layout-ManualFields })
