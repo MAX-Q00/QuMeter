@@ -1545,6 +1545,13 @@ $f.Add_FormClosing({
     }
     foreach ($tm in @($script:scanTimer, $script:runTimer, $script:updateTimer, $script:updatePoll)) { if ($tm) { try { $tm.Stop() } catch { } } }
     Stop-QmBackgroundUpdateCheck
+    if (-not $_.Cancel) {
+        try {
+            Set-AppStatus 'Thank you for using QuMeter by QuSpace Studios'
+            if ($pubBar) { $pubBar.Refresh() }
+            $f.Update()
+        } catch { }
+    }
 })
 try { Restore-MpsImport } catch { }
 [void]$f.ShowDialog()
