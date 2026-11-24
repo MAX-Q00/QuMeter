@@ -278,7 +278,13 @@ $leftTable = Add-C $split.Panel1 (New-Object Windows.Forms.TableLayoutPanel -Pro
 [void]$leftTable.RowStyles.Add((New-Object Windows.Forms.RowStyle([Windows.Forms.SizeType]::Percent, 100)))
 [void]$leftTable.RowStyles.Add((New-Object Windows.Forms.RowStyle([Windows.Forms.SizeType]::AutoSize)))
 
-$settingsHost = New-Object Windows.Forms.Panel -Property @{ Dock = 'Fill'; AutoSize = $true; AutoSizeMode = 'GrowAndShrink'; AutoScroll = $true }
+$settingsHost = New-Object Windows.Forms.TableLayoutPanel -Property @{
+    Dock = 'Top'; AutoSize = $true; AutoSizeMode = 'GrowAndShrink'
+    ColumnCount = 1; RowCount = 2; Padding = '0,0,0,0'
+}
+[void]$settingsHost.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle([Windows.Forms.SizeType]::Percent, 100)))
+[void]$settingsHost.RowStyles.Add((New-Object Windows.Forms.RowStyle([Windows.Forms.SizeType]::AutoSize)))
+[void]$settingsHost.RowStyles.Add((New-Object Windows.Forms.RowStyle([Windows.Forms.SizeType]::AutoSize)))
 $leftTable.Controls.Add($settingsHost, 0, 0)
 
 $grid = New-Object Windows.Forms.DataGridView -Property @{
@@ -297,10 +303,10 @@ $bottom = New-Object Windows.Forms.FlowLayoutPanel -Property @{
 }
 $leftTable.Controls.Add($bottom, 0, 2)
 
-$settingsFlow = Add-C $settingsHost (New-Object Windows.Forms.FlowLayoutPanel -Property @{
-    Dock = 'Top'; AutoSize = $true; AutoSizeMode = 'GrowAndShrink'
-    WrapContents = $true; FlowDirection = 'LeftToRight'; Padding = '6,4,6,0'
-})
+$settingsFlow = New-Object Windows.Forms.FlowLayoutPanel -Property @{
+    Dock = 'Fill'; AutoSize = $true; AutoSizeMode = 'GrowAndShrink'
+    WrapContents = $true; FlowDirection = 'LeftToRight'; Padding = '6,4,6,4'
+}
 function New-FlowField($labelText, $ctl, [int]$ctlWidth) {
     $wrap = New-Object Windows.Forms.FlowLayoutPanel
     $wrap.AutoSize = $true
@@ -349,7 +355,9 @@ Set-Acc $concurrency 'Parallel queries'
 [void]$settingsFlow.Controls.Add((New-FlowField '&Retries' $retries 50))
 [void]$settingsFlow.Controls.Add((New-FlowField 'P&arallel queries' $concurrency 60))
 
-$M = Add-C $settingsHost (New-Object Windows.Forms.Panel -Property @{ Dock = 'Top'; Height = 300 })
+$M = New-Object Windows.Forms.Panel -Property @{ Dock = 'Fill'; Height = 300 }
+$settingsHost.Controls.Add($M, 0, 0)
+$settingsHost.Controls.Add($settingsFlow, 0, 1)
 $scanCol = Add-C $M (New-Object Windows.Forms.Panel -Property @{ Dock = 'Right'; Width = 150 })
 New-L $M 'Printer &IPs, ranges, or CIDR (one per line or comma-separated)' 10 6 | Out-Null
 $targets = Add-C $M (New-Object Windows.Forms.TextBox -Property @{ Location = '10,24'; Size = '520,72'; Multiline = $true; ScrollBars = 'Vertical'; WordWrap = $false; AcceptsReturn = $true; Font = $fontMono })
@@ -608,6 +616,7 @@ $f.Add_Shown({
     Apply-TipsVisibility
     try { Layout-TipsPane } catch { }
     try { Layout-ManualFields } catch { }
+    Start-QmGridSelectionClear
 })
 
 $script:scanJob = $null
@@ -831,6 +840,26 @@ function Update-ExportButtons {
 function Update-CopyButton {
     if ($copyIps) { $copyIps.Enabled = -not [string]::IsNullOrWhiteSpace($responded.Text) }
 }
+function Clear-QmGridSelection {
+    if (-not $grid -or $grid.IsDisposed) { return }
+    try {
+        $grid.ClearSelection()
+        foreach ($row in @($grid.Rows)) { $row.Selected = $false }
+        $grid.CurrentCell = $null
+    } catch { }
+}
+function Start-QmGridSelectionClear {
+    Clear-QmGridSelection
+    if ($grid -and -not $grid.IsDisposed -and $grid.IsHandleCreated) {
+        [void]$grid.BeginInvoke([Windows.Forms.MethodInvoker]{ Clear-QmGridSelection })
+    }
+    try { if ($script:gridSelTimer) { $script:gridSelTimer.Stop() } } catch { }
+    $script:gridSelTimer = New-Object Windows.Forms.Timer -Property @{ Interval = 50 }
+    $script:gridSelTimer.Add_Tick({
+        try { $script:gridSelTimer.Stop(); Clear-QmGridSelection } catch { }
+    })
+    $script:gridSelTimer.Start()
+}
 function Show-ManualResults {
     $grid.Rows.Clear()
     $responded.Text = Get-QuMeterRespondedIpText -Readings @($script:readings) -ExcludeNoSerial $excludeNoSerial.Checked
@@ -847,11 +876,7 @@ function Show-ManualResults {
         elseif ($r.Status -eq 'Imported') { $grid.Rows[$i].DefaultCellStyle.ForeColor = [Drawing.SystemColors]::ControlText }
         elseif ($r.Status -ne 'OK') { $grid.Rows[$i].DefaultCellStyle.ForeColor = [Drawing.Color]::Firebrick }
     }
-    $grid.ClearSelection()
-    try { $grid.CurrentCell = $null } catch { }
-    if ($grid.IsHandleCreated) {
-        [void]$grid.BeginInvoke([Windows.Forms.MethodInvoker]{ try { $grid.ClearSelection(); $grid.CurrentCell = $null } catch { } })
-    }
+    Start-QmGridSelectionClear
     Update-CopyButton
     Set-ScanProgressVisible $false
     $c = Get-ScanCounts
@@ -1775,7 +1800,7 @@ $f.Add_FormClosing({
     if ($script:scanJob -and -not $script:scanJob.IsCompleted) {
         try { $script:scanJob.Cancel(); [void]$script:scanJob.Wait(3000) } catch { }
     }
-    foreach ($tm in @($script:scanTimer, $script:runTimer, $script:updateTimer, $script:updatePoll)) { if ($tm) { try { $tm.Stop() } catch { } } }
+    foreach ($tm in @($script:scanTimer, $script:runTimer, $script:updateTimer, $script:updatePoll, $script:gridSelTimer)) { if ($tm) { try { $tm.Stop() } catch { } } }
     Stop-QmBackgroundUpdateCheck
     if (-not $_.Cancel) {
         try {
