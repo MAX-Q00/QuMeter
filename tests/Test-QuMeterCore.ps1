@@ -401,6 +401,66 @@ Assert-Eq $impUn.Rows[0].Customer 'CODE-Z' 'blank customer description falls bac
 $impNone = Import-QmMpsListFromCsvText -Text "Customer Description,Ip Address`n, "
 Assert-Eq $impNone.TotalRows 0 'rows with no useful fields are skipped'
 
+# --- Flattened IP text, placeholder repair, and IP Search/No Customer
+$arr = [string[]]@('192.0.2.10', '192.0.2.11')
+$wrapped = ,$arr
+Assert-Eq (ConvertTo-QmMultilineText $wrapped) "192.0.2.10`r`n192.0.2.11" 'unary-comma string arrays flatten to real IP text'
+Assert-True ((ConvertTo-QmMultilineText $wrapped) -notmatch 'System\.') 'flattened IP text never shows System.String[]'
+$uiWrap = ,@(Get-QmMpsIpList $imp.Rows)
+Assert-Eq (ConvertTo-QmMultilineText $uiWrap) (Get-QmMpsIpText $imp.Rows) 'Get-QmMpsIpList wrapped in @() still flattens'
+Assert-Eq (Repair-QmTargetText 'System.String[]') '' 'saved System.String[] is cleared'
+Assert-Eq (Repair-QmTargetText 'System.Object[]') '' 'saved System.Object[] is cleared'
+Assert-Eq (Repair-QmTargetText "192.0.2.10`r`n192.0.2.11") "192.0.2.10`r`n192.0.2.11" 'real IP text is kept'
+Assert-Eq (Repair-QmTargetText $wrapped) "192.0.2.10`r`n192.0.2.11" 'array settings values flatten to IP text'
+Assert-True (Test-QmPlaceholderTargetText 'System.String[]') 'System.String[] is a placeholder'
+Assert-True (-not (Test-QmPlaceholderTargetText '192.0.2.10')) 'a real IP is not a placeholder'
+$ipText = Get-QmMpsIpText $imp.Rows
+Assert-True ($ipText -match '192\.0\.2\.10') 'imported IP text includes the first address'
+Assert-True ($ipText -notmatch 'System\.') 'Get-QmMpsIpText never emits a type name'
+Assert-Eq (Get-QmMpsIpText $groupA) "192.0.2.10`r`n192.0.2.11" 'customer IP text is one address per line'
+
+$noneItems = Get-QmMpsCustomerFilterItems $null
+Assert-Eq $noneItems.Count 1 'with no import the drop-down has one item'
+Assert-Eq $noneItems[0] (Get-QmMpsIpSearchLabel) 'IP Search/No Customer is the only item without an import'
+$withItems = Get-QmMpsCustomerFilterItems $imp.Rows
+Assert-Eq $withItems[0] (Get-QmMpsIpSearchLabel) 'IP Search/No Customer stays at the top after import'
+Assert-Eq $withItems[1] (Get-QmMpsAllCustomersLabel) 'All customers sits under IP Search'
+Assert-Eq $withItems[2] 'Customer A' 'customer names follow All customers'
+Assert-Eq (Get-QmMpsDefaultCustomer -HasImport $false) (Get-QmMpsIpSearchLabel) 'default without an import is IP Search'
+Assert-Eq (Get-QmMpsDefaultCustomer -HasImport $true) (Get-QmMpsAllCustomersLabel) 'default after an import is All customers'
+$searchRows = Get-QmMpsRowsForCustomer -Rows $imp.Rows -Customer (Get-QmMpsIpSearchLabel)
+Assert-Eq $searchRows.Count 0 'IP Search mode does not pull imported rows'
+
+Assert-True (Test-QmMpsShouldSwitchToIpSearch -CurrentCustomer 'Customer A' -TargetText '192.0.2.10' -HasImport $true) 'typing an IP with a customer selected switches to IP Search'
+Assert-True (-not (Test-QmMpsShouldSwitchToIpSearch -CurrentCustomer 'Customer A' -TargetText '192.0.2.10' -HasImport $true -Programmatic $true)) 'programmatic IP fills do not switch the drop-down'
+Assert-True (-not (Test-QmMpsShouldSwitchToIpSearch -CurrentCustomer 'Customer A' -TargetText '' -HasImport $true)) 'an empty IP box does not switch'
+Assert-True (-not (Test-QmMpsShouldSwitchToIpSearch -CurrentCustomer (Get-QmMpsIpSearchLabel) -TargetText '192.0.2.10' -HasImport $true)) 'already on IP Search stays there'
+Assert-True (-not (Test-QmMpsShouldSwitchToIpSearch -CurrentCustomer 'Customer A' -TargetText 'System.String[]' -HasImport $true)) 'placeholder text does not switch to IP Search'
+Assert-True (-not (Test-QmMpsShouldSwitchToIpSearch -CurrentCustomer 'All customers' -TargetText '10.0.0.1' -HasImport $false)) 'no import means no switch'
+
+Assert-Eq (Get-QmManualScanTargetText -TargetText '' -Import $imp -Customer 'All customers') (Get-QmMpsIpText $imp.Rows) 'empty box + All customers scans every imported IP'
+Assert-Eq (Get-QmManualScanTargetText -TargetText 'System.String[]' -Import $imp -Customer 'Customer A') (Get-QmMpsIpText $groupA) 'placeholder box + a customer scans that customer'
+Assert-Eq (Get-QmManualScanTargetText -TargetText "10.0.0.1`r`n10.0.0.2" -Import $imp -Customer 'Customer A') "10.0.0.1`r`n10.0.0.2" 'typed IPs win over the imported list'
+Assert-Eq (Get-QmManualScanTargetText -TargetText '' -Import $imp -Customer (Get-QmMpsIpSearchLabel)) '' 'IP Search with an empty box has nothing to scan'
+Assert-Eq (Get-QmManualScanTargetText -TargetText '10.0.0.9' -Import $imp -Customer (Get-QmMpsIpSearchLabel)) '10.0.0.9' 'IP Search uses the typed address'
+Assert-Eq (Get-QmManualScanTargetText -TargetText '' -Import $null -Customer (Get-QmMpsIpSearchLabel)) '' 'no import and an empty box stays empty'
+Assert-True (Test-QmMpsShouldMergeScan -Customer 'All customers' -Import $imp) 'customer selections merge scan results with imported fields'
+Assert-True (Test-QmMpsShouldMergeScan -Customer 'Customer A' -Import $imp) 'a single customer still merges imported fields'
+Assert-True (-not (Test-QmMpsShouldMergeScan -Customer (Get-QmMpsIpSearchLabel) -Import $imp)) 'IP Search does not filter or merge by customer'
+Assert-True (-not (Test-QmMpsShouldMergeScan -Customer 'All customers' -Import $null)) 'no import means no merge'
+
+$readingList = New-Object 'System.Collections.Generic.List[QuMeterSnmp.PrinterReading]'
+$scanOk = New-Object QuMeterSnmp.PrinterReading
+$scanOk.Ip = '192.0.2.10'; $scanOk.Model = 'Live A'; $scanOk.Serial = 'LIVE-A'; $scanOk.Total = '50'; $scanOk.Status = 'OK'
+$mergedList = Merge-QmImportedReadings -ScanReadings @($scanOk) -ImportRows $imp.Rows
+$wrappedMerge = ,$mergedList.ToArray()
+$addThrew = $false
+try { Add-QmReadingsToList -List $readingList -Items $wrappedMerge } catch { $addThrew = $true }
+Assert-True (-not $addThrew) 'adding a wrapped merge result to List[PrinterReading] does not throw'
+Assert-True ($readingList.Count -ge 3) 'flattened merge still includes imported rows'
+Assert-Eq $readingList[0].Customer 'Customer A' 'merged customer field survives the list add'
+Assert-Eq $readingList[0].Total '50' 'scanned meters survive the list add'
+
 Write-Host ''
 Write-Host "Results: $($script:passed) passed, $($script:failed) failed"
 if ($script:failed -gt 0) { exit 1 }

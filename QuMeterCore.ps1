@@ -614,6 +614,128 @@ function ConvertTo-QmObjectList {
     return ,$list
 }
 
+function Get-QmMpsIpSearchLabel { return 'IP Search/No Customer' }
+function Get-QmMpsAllCustomersLabel { return 'All customers' }
+
+function Test-QmMpsIpSearchMode {
+    param([string]$Customer)
+    return [string]$Customer -eq (Get-QmMpsIpSearchLabel)
+}
+
+function Test-QmMpsAllCustomersMode {
+    param([string]$Customer)
+    return [string]::IsNullOrWhiteSpace($Customer) -or $Customer -eq (Get-QmMpsAllCustomersLabel)
+}
+
+function Test-QmPlaceholderTargetText {
+    param([string]$Text)
+    if ([string]::IsNullOrWhiteSpace($Text)) { return $true }
+    $t = $Text.Trim()
+    return [bool]($t -match '^(System\.(String|Object)\[\]|System\.\w+(\[\])+)$')
+}
+
+function ConvertTo-QmFlatList {
+    param($Value)
+    $out = New-Object System.Collections.Generic.List[object]
+    function Add-QmFlatItem {
+        param($Item)
+        if ($null -eq $Item) { return }
+        if ($Item -is [string]) {
+            if (Test-QmPlaceholderTargetText $Item) { return }
+            $out.Add($Item)
+            return
+        }
+        if ($Item -is [System.Management.Automation.PSCustomObject] -or $Item -is [System.Collections.IDictionary]) {
+            $out.Add($Item)
+            return
+        }
+        if ($Item.GetType().FullName -eq 'QuMeterSnmp.PrinterReading') {
+            $out.Add($Item)
+            return
+        }
+        if ($Item -is [System.Collections.IEnumerable]) {
+            foreach ($child in $Item) { Add-QmFlatItem $child }
+            return
+        }
+        $out.Add($Item)
+    }
+    Add-QmFlatItem $Value
+    return ,$out
+}
+
+function ConvertTo-QmMultilineText {
+    param($Value)
+    $lines = New-Object System.Collections.Generic.List[string]
+    foreach ($item in (ConvertTo-QmFlatList $Value)) {
+        $s = [string]$item
+        if ([string]::IsNullOrWhiteSpace($s)) { continue }
+        if (Test-QmPlaceholderTargetText $s) { continue }
+        $lines.Add($s)
+    }
+    if ($lines.Count -eq 0) { return '' }
+    return [string]::Join("`r`n", $lines.ToArray())
+}
+
+function Repair-QmTargetText {
+    param($Text)
+    if ($null -eq $Text) { return '' }
+    if ($Text -isnot [string]) { return (ConvertTo-QmMultilineText $Text) }
+    if (Test-QmPlaceholderTargetText $Text) { return '' }
+    return [string]$Text
+}
+
+function Get-QmMpsCustomerFilterItems {
+    param($Rows)
+    $items = New-Object System.Collections.Generic.List[string]
+    [void]$items.Add((Get-QmMpsIpSearchLabel))
+    $rowList = ConvertTo-QmObjectList $Rows
+    if ($rowList.Count -eq 0) { return ,$items }
+    [void]$items.Add((Get-QmMpsAllCustomersLabel))
+    foreach ($name in (ConvertTo-QmFlatList (Get-QmMpsCustomerNames $Rows))) {
+        $s = [string]$name
+        if (-not [string]::IsNullOrWhiteSpace($s)) { [void]$items.Add($s) }
+    }
+    return ,$items
+}
+
+function Get-QmMpsDefaultCustomer {
+    param([bool]$HasImport)
+    if ($HasImport) { return (Get-QmMpsAllCustomersLabel) }
+    return (Get-QmMpsIpSearchLabel)
+}
+
+function Test-QmMpsShouldSwitchToIpSearch {
+    param([string]$CurrentCustomer, [string]$TargetText, [bool]$HasImport, [bool]$Programmatic = $false)
+    if ($Programmatic) { return $false }
+    if (-not $HasImport) { return $false }
+    if (Test-QmMpsIpSearchMode $CurrentCustomer) { return $false }
+    $text = Repair-QmTargetText $TargetText
+    return -not [string]::IsNullOrWhiteSpace($text)
+}
+
+function Get-QmManualScanTargetText {
+    param([string]$TargetText, $Import, [string]$Customer)
+    $text = Repair-QmTargetText $TargetText
+    if (-not [string]::IsNullOrWhiteSpace($text)) { return [string]$text }
+    if (-not $Import -or -not $Import.Rows -or (Test-QmMpsIpSearchMode $Customer)) { return '' }
+    return (Get-QmMpsIpText (Get-QmMpsRowsForCustomer -Rows $Import.Rows -Customer $Customer))
+}
+
+function Test-QmMpsShouldMergeScan {
+    param([string]$Customer, $Import)
+    if (-not $Import -or -not $Import.Rows) { return $false }
+    return -not (Test-QmMpsIpSearchMode $Customer)
+}
+
+function Add-QmReadingsToList {
+    param($List, $Items)
+    if ($null -eq $List) { throw 'Reading list is missing.' }
+    foreach ($r in (ConvertTo-QmFlatList $Items)) {
+        if ($null -eq $r) { continue }
+        [void]$List.Add($r)
+    }
+}
+
 function Get-QmMpsCustomerNames {
 
     param($Rows)
@@ -633,7 +755,8 @@ function Get-QmMpsCustomerNames {
 function Get-QmMpsRowsForCustomer {
     param($Rows, [string]$Customer)
     $list = ConvertTo-QmObjectList $Rows
-    if ([string]::IsNullOrWhiteSpace($Customer) -or $Customer -eq 'All customers') { return ,$list }
+    if (Test-QmMpsIpSearchMode $Customer) { return ,(New-Object System.Collections.Generic.List[object]) }
+    if (Test-QmMpsAllCustomersMode $Customer) { return ,$list }
     $want = $Customer.Trim()
     $filtered = New-Object System.Collections.Generic.List[object]
     foreach ($r in $list) {
@@ -653,7 +776,12 @@ function Get-QmMpsIpList {
         $seen[$ip] = $true
         $ips.Add($ip)
     }
-    return ,$ips.ToArray()
+    return ,$ips
+}
+
+function Get-QmMpsIpText {
+    param($Rows)
+    return (ConvertTo-QmMultilineText (Get-QmMpsIpList $Rows))
 }
 
 function ConvertTo-QmImportedReading {
@@ -742,7 +870,7 @@ function Merge-QmImportedReadings {
         }
         $merged.Add((ConvertTo-QmImportedReading $row))
     }
-    return ,$merged.ToArray()
+    return ,$merged
 }
 
 function New-QmMpsImportResult {

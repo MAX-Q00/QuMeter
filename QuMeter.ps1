@@ -183,9 +183,10 @@ $script:lastMpsImportFolder = $null
 if ($saved -and ($saved.PSObject.Properties.Name -contains 'lastMpsImportFolder') -and $saved.lastMpsImportFolder) { $script:lastMpsImportFolder = [string]$saved.lastMpsImportFolder }
 $script:mpsImportPath = Get-QmMpsImportPath $app
 $script:mpsImport = $null
-$script:mpsSelectedCustomer = 'All customers'
+$script:mpsSelectedCustomer = Get-QmMpsIpSearchLabel
 $script:listSource = ''
 $script:updatingCustomerFilter = $false
+$script:updatingTargets = $false
 $script:lastScanReadings = @()
 $split = New-Object Windows.Forms.SplitContainer
 $split.Width = 1000
@@ -236,7 +237,10 @@ Set-Acc $concurrency 'Parallel queries'
 New-L $M 'Printer &IPs, ranges, or CIDR (one per line or comma-separated)' 10 42 | Out-Null
 $targets = Add-C $M (New-Object Windows.Forms.TextBox -Property @{ Location = '10,62'; Size = '520,90'; Multiline = $true; ScrollBars = 'Both'; WordWrap = $false; AcceptsReturn = $true; Font = $fontMono })
 Set-Acc $targets 'Printer IPs, ranges, or CIDR'
-if ($saved.targets) { $targets.Text = $saved.targets }
+if ($saved.targets) {
+    $script:updatingTargets = $true
+    try { $targets.Text = Repair-QmTargetText $saved.targets } finally { $script:updatingTargets = $false }
+}
 $load = New-B $scanCol '&Load list...' 10 62 130 28
 Set-Acc $load 'Load list'
 $scan = New-B $scanCol '&Scan' 10 94 130 36
@@ -277,9 +281,9 @@ Set-Acc $editMap 'Edit mapping'
 $lblCustomer = New-L $M '&Customer' 10 193
 $customerFilter = Add-C $M (New-Object Windows.Forms.ComboBox -Property @{ Location = '78,190'; Width = 452; DropDownStyle = 'DropDownList' })
 Set-Acc $customerFilter 'Customer'
-$customerFilter.Enabled = $false
-[void]$customerFilter.Items.Add('No imported list')
+[void]$customerFilter.Items.Add((Get-QmMpsIpSearchLabel))
 $customerFilter.SelectedIndex = 0
+$customerFilter.Enabled = $true
 
 $excludeTo = Add-C $M (New-Object Windows.Forms.CheckBox -Property @{ Text = "Don't show printers that timed out in the grid or in exports"; Location = '10,218'; AutoSize = $true })
 Set-Acc $excludeTo 'Hide printers that timed out'
@@ -340,7 +344,7 @@ $manualTips = @"
 TIPS - USING THE MANUAL OUTPUT
 
 IMPORT LIST (MPS)
-Click Import List (MPS) under Scan to load an MPS fleet report (.xlsx or .csv). QuMeter reads the IP, customer, model, serial, and other columns, fills the results list, and stores that list until you import again. A new scan reads meters for the IPs currently shown and keeps the imported customer details. Use the Customer drop-down to show one customer or All customers; Scan then queries only those IPs. Rows with no IP stay in the list but are not scanned. The imported list is saved in mps-import.json and comes back after you restart the app.
+Click Import List (MPS) under Scan to load an MPS fleet report (.xlsx or .csv). QuMeter reads the IP, customer, model, serial, and other columns, fills the results list, and stores that list until you import again. A new scan reads meters for the IPs currently shown and keeps the imported customer details. The Customer drop-down always starts with IP Search/No Customer (the default when no list is imported). After an import it also lists All customers and each customer; picking a customer shows only that customer's rows. If the IP box is empty, Scan queries the imported IPs for the selected customer. Typing an IP or range switches the drop-down to IP Search/No Customer and Scan uses the typed addresses with no customer filter. Rows with no IP stay in the list but are not scanned. The imported list is saved in mps-import.json and comes back after you restart the app.
 
 RECOMMENDED: e-automate workbook  (Export e-automate)
 Best path for updating meters on many serial numbers at once. Only printers that answered AND reported a serial are included.
@@ -427,37 +431,42 @@ $M.Add_Resize({
 })
 
 $script:scanJob = $null
+function Set-TargetText([string]$Text) {
+    $script:updatingTargets = $true
+    try { $targets.Text = [string]$Text } finally { $script:updatingTargets = $false }
+}
 function Get-MpsFilterRows {
-    if (-not $script:mpsImport) { return @() }
-    return @(Get-QmMpsRowsForCustomer -Rows $script:mpsImport.Rows -Customer $script:mpsSelectedCustomer)
+    if (-not $script:mpsImport) { return (New-Object System.Collections.Generic.List[object]) }
+    return (Get-QmMpsRowsForCustomer -Rows $script:mpsImport.Rows -Customer $script:mpsSelectedCustomer)
 }
 function Set-MpsCustomerFilterItems([string]$Selected) {
     $script:updatingCustomerFilter = $true
     try {
         $customerFilter.Items.Clear()
-        if (-not $script:mpsImport) {
-            [void]$customerFilter.Items.Add('No imported list')
-            $customerFilter.SelectedIndex = 0
-            $customerFilter.Enabled = $false
-            return
+        $rowSource = $null
+        if ($script:mpsImport) { $rowSource = $script:mpsImport.Rows }
+        foreach ($name in (ConvertTo-QmFlatList (Get-QmMpsCustomerFilterItems $rowSource))) {
+            [void]$customerFilter.Items.Add([string]$name)
         }
-        [void]$customerFilter.Items.Add('All customers')
-        foreach ($name in @(Get-QmMpsCustomerNames $script:mpsImport.Rows)) { [void]$customerFilter.Items.Add($name) }
         $pick = $Selected
-        if ([string]::IsNullOrWhiteSpace($pick)) { $pick = 'All customers' }
+        if ([string]::IsNullOrWhiteSpace($pick)) { $pick = Get-QmMpsDefaultCustomer -HasImport ([bool]$script:mpsImport) }
         $idx = $customerFilter.Items.IndexOf($pick)
-        if ($idx -lt 0) { $idx = 0; $pick = 'All customers' }
+        if ($idx -lt 0) {
+            $pick = Get-QmMpsDefaultCustomer -HasImport ([bool]$script:mpsImport)
+            $idx = $customerFilter.Items.IndexOf($pick)
+            if ($idx -lt 0) { $idx = 0; $pick = [string]$customerFilter.Items[0] }
+        }
         $customerFilter.SelectedIndex = $idx
         $script:mpsSelectedCustomer = $pick
         $customerFilter.Enabled = $true
     } finally { $script:updatingCustomerFilter = $false }
 }
 function Show-MpsImportedList {
+    if (Test-QmMpsIpSearchMode $script:mpsSelectedCustomer) { return }
     $rows = Get-MpsFilterRows
-    $ips = @(Get-QmMpsIpList $rows)
-    $targets.Text = ($ips -join "`r`n")
+    Set-TargetText (Get-QmMpsIpText $rows)
     $script:readings.Clear()
-    foreach ($row in $rows) { [void]$script:readings.Add((ConvertTo-QmImportedReading $row)) }
+    Add-QmReadingsToList -List $script:readings -Items @($rows | ForEach-Object { ConvertTo-QmImportedReading $_ })
     $script:listSource = 'import'
     $script:scanWasCancelled = $false
     Show-ManualResults
@@ -512,23 +521,29 @@ $importMps.Add_Click({
 })
 $customerFilter.Add_SelectedIndexChanged({
     if ($script:updatingCustomerFilter) { return }
-    if (-not $script:mpsImport) { return }
     $sel = [string]$customerFilter.SelectedItem
     if ([string]::IsNullOrWhiteSpace($sel)) { return }
     $script:mpsSelectedCustomer = $sel
-    if (Test-Path -LiteralPath $script:mpsImportPath) {
+    if ($script:mpsImport -and (Test-Path -LiteralPath $script:mpsImportPath)) {
         try { Save-QmMpsImport -Import $script:mpsImport -Path $script:mpsImportPath -SelectedCustomer $sel } catch { }
     }
+    if (Test-QmMpsIpSearchMode $sel) {
+        Persist
+        return
+    }
+    if (-not $script:mpsImport) { Persist; return }
     if ($script:listSource -eq 'scan') {
         $importRows = Get-MpsFilterRows
-        $ips = @(Get-QmMpsIpList $importRows)
         $ipSet = @{}
-        foreach ($ip in $ips) { $ipSet[$ip] = $true }
-        $scanRows = @($script:lastScanReadings | Where-Object { $_.Ip -and $ipSet.ContainsKey([string]$_.Ip) })
+        foreach ($ip in (ConvertTo-QmFlatList (Get-QmMpsIpList $importRows))) { $ipSet[[string]$ip] = $true }
+        $scanRows = New-Object System.Collections.Generic.List[object]
+        foreach ($r in (ConvertTo-QmFlatList $script:lastScanReadings)) {
+            if ($r.Ip -and $ipSet.ContainsKey([string]$r.Ip)) { [void]$scanRows.Add($r) }
+        }
         $script:readings.Clear()
-        $merged = @(Merge-QmImportedReadings -ScanReadings $scanRows -ImportRows $importRows)
-        foreach ($r in $merged) { [void]$script:readings.Add($r) }
-        $targets.Text = ($ips -join "`r`n")
+        $merged = Merge-QmImportedReadings -ScanReadings $scanRows -ImportRows $importRows
+        Add-QmReadingsToList -List $script:readings -Items $merged
+        Set-TargetText (Get-QmMpsIpText $importRows)
         Persist
         Show-ManualResults
         return
@@ -536,8 +551,23 @@ $customerFilter.Add_SelectedIndexChanged({
     Show-MpsImportedList
     Persist
 })
+$targets.Add_TextChanged({
+    if ($script:updatingTargets) { return }
+    if ($script:scanJob) { return }
+    if (-not (Test-QmMpsShouldSwitchToIpSearch -CurrentCustomer $script:mpsSelectedCustomer -TargetText $targets.Text -HasImport ([bool]$script:mpsImport) -Programmatic $false)) { return }
+    $script:updatingCustomerFilter = $true
+    try {
+        $script:mpsSelectedCustomer = Get-QmMpsIpSearchLabel
+        $idx = $customerFilter.Items.IndexOf((Get-QmMpsIpSearchLabel))
+        if ($idx -ge 0) { $customerFilter.SelectedIndex = $idx }
+    } finally { $script:updatingCustomerFilter = $false }
+    if ($script:mpsImport -and (Test-Path -LiteralPath $script:mpsImportPath)) {
+        try { Save-QmMpsImport -Import $script:mpsImport -Path $script:mpsImportPath -SelectedCustomer $script:mpsSelectedCustomer } catch { }
+    }
+    Persist
+})
 function Persist {
-    Save-Settings @{ community = $community.Text; version = $ver.SelectedItem.ToString(); port = [int]$port.Value; timeoutMs = [int]$timeout.Value; retries = [int]$retries.Value; concurrency = [int]$concurrency.Value; targets = $targets.Text; excludeTimedOut = [bool]$excludeTo.Checked; excludeNoSerial = [bool]$excludeNoSerial.Checked; remarks = $remarks.Text; hideTips = [bool]$hideTips.Checked; lastExportFolder = [string]$script:lastExportFolder; lastMpsImportFolder = [string]$script:lastMpsImportFolder; mpsSelectedCustomer = [string]$script:mpsSelectedCustomer }
+    Save-Settings @{ community = $community.Text; version = $ver.SelectedItem.ToString(); port = [int]$port.Value; timeoutMs = [int]$timeout.Value; retries = [int]$retries.Value; concurrency = [int]$concurrency.Value; targets = (Repair-QmTargetText $targets.Text); excludeTimedOut = [bool]$excludeTo.Checked; excludeNoSerial = [bool]$excludeNoSerial.Checked; remarks = $remarks.Text; hideTips = [bool]$hideTips.Checked; lastExportFolder = [string]$script:lastExportFolder; lastMpsImportFolder = [string]$script:lastMpsImportFolder; mpsSelectedCustomer = [string]$script:mpsSelectedCustomer }
     if ($script:cfg) { $script:cfg.eaRemarks = $remarks.Text; $script:cfg.excludeNoSerial = [bool]$excludeNoSerial.Checked }
     if (Test-Path -LiteralPath $configPath) {
         try {
@@ -630,7 +660,7 @@ function Show-ManualResults {
         $ipCount = @($visible | Where-Object { $_.Status -eq 'Imported' }).Count
         $noIpCount = @($visible | Where-Object { $_.Status -eq 'No IP' }).Count
         $who = $script:mpsSelectedCustomer
-        if ([string]::IsNullOrWhiteSpace($who) -or $who -eq 'All customers') { $who = 'all customers' }
+        if (Test-QmMpsAllCustomersMode $who) { $who = 'all customers' }
         $src = ''
         if ($script:mpsImport -and $script:mpsImport.SourceName) { $src = " from $($script:mpsImport.SourceName)" }
         Set-ProgressBarState $scanBar 'normal'
@@ -658,7 +688,7 @@ function Set-ScanControlsRunning([bool]$running) {
     $scanCancel.Enabled = $running
     $load.Enabled = -not $running
     $importMps.Enabled = -not $running
-    $customerFilter.Enabled = (-not $running) -and [bool]$script:mpsImport
+    $customerFilter.Enabled = -not $running
     $f.UseWaitCursor = [bool]$running
     $f.AcceptButton = $(if ($running) { $scanCancel } else { $scan })
     Update-ExportButtons
@@ -675,14 +705,13 @@ function Complete-ManualScan($j) {
         return
     }
     $script:readings.Clear()
-    $results = @()
-    if ($j.Results) { $results = @($j.Results) }
-    $script:lastScanReadings = @($results)
-    if ($script:mpsImport -and $script:mpsImport.Rows) {
+    $results = ConvertTo-QmFlatList $j.Results
+    $script:lastScanReadings = ConvertTo-QmFlatList $results
+    if (Test-QmMpsShouldMergeScan -Customer $script:mpsSelectedCustomer -Import $script:mpsImport) {
         $importRows = Get-QmMpsRowsForCustomer -Rows $script:mpsImport.Rows -Customer $script:mpsSelectedCustomer
-        $results = @(Merge-QmImportedReadings -ScanReadings $results -ImportRows $importRows)
+        $results = Merge-QmImportedReadings -ScanReadings $results -ImportRows $importRows
     }
-    foreach ($r in $results) { [void]$script:readings.Add($r) }
+    Add-QmReadingsToList -List $script:readings -Items $results
     $script:scanWasCancelled = [bool]$j.IsCancelled
     $script:listSource = 'scan'
     Show-ManualResults
@@ -800,8 +829,27 @@ $exportAll.Add_Click({
 $scan.Add_Click({
     if ($script:scanJob) { return }
     Persist
-    try { $hosts = [QuMeterSnmp.TargetParser]::Parse($targets.Text, 65536) } catch { Msg $_.Exception.Message 'Warning'; return }
-    if ($hosts.Count -eq 0) { Msg 'Enter at least one IP, range, or CIDR.'; return }
+    $scanText = Get-QmManualScanTargetText -TargetText $targets.Text -Import $script:mpsImport -Customer $script:mpsSelectedCustomer
+    if ([string]::IsNullOrWhiteSpace($scanText)) {
+        if ($script:mpsImport -and -not (Test-QmMpsIpSearchMode $script:mpsSelectedCustomer)) {
+            Msg 'The imported list has no usable IPs for the selected customer.'
+        } else {
+            Msg 'Enter at least one IP, range, or CIDR.'
+        }
+        return
+    }
+    if ((Repair-QmTargetText $targets.Text) -ne $scanText -and -not (Test-QmMpsIpSearchMode $script:mpsSelectedCustomer)) {
+        Set-TargetText $scanText
+    }
+    try { $hosts = [QuMeterSnmp.TargetParser]::Parse($scanText, 65536) } catch { Msg $_.Exception.Message 'Warning'; return }
+    if ($hosts.Count -eq 0) {
+        if ($script:mpsImport -and -not (Test-QmMpsIpSearchMode $script:mpsSelectedCustomer)) {
+            Msg 'The imported list has no usable IPs for the selected customer.'
+        } else {
+            Msg 'Enter at least one IP, range, or CIDR.'
+        }
+        return
+    }
     if ($hosts.Count -gt 256 -and -not (Ask "This expands to $($hosts.Count) addresses. Scan anyway?")) { return }
     $grid.Rows.Clear(); $script:readings.Clear(); $responded.Text = ''
     $script:scanWasCancelled = $false
@@ -824,16 +872,25 @@ $scanCancel.Add_Click({
 })
 $script:scanTimer = New-Object Windows.Forms.Timer -Property @{ Interval = 200 }
 $script:scanTimer.Add_Tick({
-    $j = $script:scanJob
-    if (-not $j) { $script:scanTimer.Stop(); return }
-    $scanBar.Value = [math]::Min($j.Done, $scanBar.Maximum)
-    if (-not $j.IsCompleted) {
-        if ($scanCount) { $scanCount.Text = "$($j.Done) / $($j.Total)" }
-        if ($j.IsCancelled) { Set-AppStatus "Stopping scan... $($j.Done) of $($j.Total) checked." ([Drawing.Color]::FromArgb(150, 90, 0)) }
-        else { Set-AppStatus "Scanning $($j.Done) of $($j.Total)..." }
-        return
+    try {
+        $j = $script:scanJob
+        if (-not $j) { $script:scanTimer.Stop(); return }
+        $scanBar.Value = [math]::Min($j.Done, $scanBar.Maximum)
+        if (-not $j.IsCompleted) {
+            if ($scanCount) { $scanCount.Text = "$($j.Done) / $($j.Total)" }
+            if ($j.IsCancelled) { Set-AppStatus "Stopping scan... $($j.Done) of $($j.Total) checked." ([Drawing.Color]::FromArgb(150, 90, 0)) }
+            else { Set-AppStatus "Scanning $($j.Done) of $($j.Total)..." }
+            return
+        }
+        Complete-ManualScan $j
+    } catch {
+        try { $script:scanTimer.Stop() } catch { }
+        $script:scanJob = $null
+        try { Set-ScanControlsRunning $false } catch { }
+        $msg = $_.Exception.Message
+        try { Set-AppStatus "Scan failed: $msg" ([Drawing.Color]::Firebrick) } catch { }
+        try { Msg $msg 'Error' } catch { }
     }
-    Complete-ManualScan $j
 })
 
 # ================================================================== AUTOMATE TAB
@@ -1248,17 +1305,23 @@ function Read-ProgressLines {
 }
 $script:runTimer = New-Object Windows.Forms.Timer -Property @{ Interval = 300 }
 $script:runTimer.Add_Tick({
-    try { Read-ProgressLines } catch { }
-    if ($script:runProc -and $script:runProc.HasExited) {
-        $script:runTimer.Stop()
+    try {
         try { Read-ProgressLines } catch { }
-        $code = $script:runProc.ExitCode
-        $script:runProc = $null
-        Update-RunOnceEnabled
-        if ($runBar.Value -lt $runBar.Maximum -and $code -eq 0) { $runBar.Value = $runBar.Maximum }
-        Show-LocalResult
-        Update-LastRunLinks
-        Remove-Item -LiteralPath $script:runProgFile -Force -ErrorAction SilentlyContinue
+        if ($script:runProc -and $script:runProc.HasExited) {
+            $script:runTimer.Stop()
+            try { Read-ProgressLines } catch { }
+            $code = $script:runProc.ExitCode
+            $script:runProc = $null
+            Update-RunOnceEnabled
+            if ($runBar.Value -lt $runBar.Maximum -and $code -eq 0) { $runBar.Value = $runBar.Maximum }
+            Show-LocalResult
+            Update-LastRunLinks
+            Remove-Item -LiteralPath $script:runProgFile -Force -ErrorAction SilentlyContinue
+        }
+    } catch {
+        try { $script:runTimer.Stop() } catch { }
+        try { Set-AppStatus "Run failed: $($_.Exception.Message)" ([Drawing.Color]::Firebrick) } catch { }
+        try { Msg $_.Exception.Message 'Error' } catch { }
     }
 })
 $lnkOut.Add_LinkClicked({ $p = Get-LocalFolder 'outputFolder'; if ($p -and (Test-Path -LiteralPath $p)) { Start-Process explorer.exe -ArgumentList "`"$p`"" } else { Msg "Output folder doesn't exist yet: $p" } })
@@ -1409,18 +1472,22 @@ function Start-QmBackgroundUpdateCheck {
     $script:updateHandle = $script:updatePs.BeginInvoke()
     $script:updatePoll = New-Object Windows.Forms.Timer -Property @{ Interval = 250 }
     $script:updatePoll.Add_Tick({
-        if (-not $script:updateHandle -or -not $script:updateHandle.IsCompleted) { return }
-        $script:updatePoll.Stop()
-        $rel = $null
         try {
-            $out = $script:updatePs.EndInvoke($script:updateHandle)
-            if ($out) { $rel = @($out)[-1] }
-        } catch { $rel = $null }
-        Stop-QmBackgroundUpdateCheck
-        if ($rel -and $rel.Version) {
+            if (-not $script:updateHandle -or -not $script:updateHandle.IsCompleted) { return }
+            $script:updatePoll.Stop()
+            $rel = $null
             try {
-                if ((Compare-QmVersion (Get-QmVersion) $rel.Version) -lt 0) { Show-QmUpdatePrompt $rel }
-            } catch { }
+                $out = $script:updatePs.EndInvoke($script:updateHandle)
+                if ($out) { $rel = @($out)[-1] }
+            } catch { $rel = $null }
+            Stop-QmBackgroundUpdateCheck
+            if ($rel -and $rel.Version) {
+                try {
+                    if ((Compare-QmVersion (Get-QmVersion) $rel.Version) -lt 0) { Show-QmUpdatePrompt $rel }
+                } catch { }
+            }
+        } catch {
+            try { $script:updatePoll.Stop() } catch { }
         }
     })
     $script:updatePoll.Start()
@@ -1429,8 +1496,12 @@ $pubUpdate.Add_Click({ Show-QmUpdateCheck })
 $f.Add_Shown({
     $script:updateTimer = New-Object Windows.Forms.Timer -Property @{ Interval = 800 }
     $script:updateTimer.Add_Tick({
-        $script:updateTimer.Stop()
-        Start-QmBackgroundUpdateCheck
+        try {
+            $script:updateTimer.Stop()
+            Start-QmBackgroundUpdateCheck
+        } catch {
+            try { $script:updateTimer.Stop() } catch { }
+        }
     })
     $script:updateTimer.Start()
 })
