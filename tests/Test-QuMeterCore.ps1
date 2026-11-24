@@ -507,6 +507,20 @@ Assert-True (-not (Test-QmTipsShouldCollapse -Width 1200 -HidePref $false -Pinne
 Assert-True (Test-QmTipsShouldCollapse -Width 1200 -HidePref $true -PinnedOpen $false) 'the hidden preference still applies on a wide window'
 Assert-True (-not (Test-QmTipsShouldCollapse -Width 900 -HidePref $true -PinnedOpen $true)) 'clicking Tips pins the pane open even on a narrow window'
 
+Assert-True (Test-QmFilterChangeCanRun $false) 'filter checkbox changes run when no refresh is in progress'
+Assert-True (-not (Test-QmFilterChangeCanRun $true)) 'filter checkbox changes are ignored while a refresh is running'
+Assert-Eq (Get-QmScanProgressText 12 40) '12 / 40 IPs' 'scan progress shows the IP count on the bar'
+Assert-Eq (Get-QmScanProgressText 0 1) '0 / 1 IPs' 'scan progress starts at 0 / total IPs'
+Assert-Eq (Get-QmEditExportMappingButtonText) 'Edit Export Mapping...' 'Manual mapping button is Edit Export Mapping...'
+$atomicDir = Join-Path ([IO.Path]::GetTempPath()) ('qm-atomic-' + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $atomicDir -Force | Out-Null
+$atomicPath = Join-Path $atomicDir 'settings.json'
+Save-QmTextAtomic -Path $atomicPath -Text '{"excludeTimedOut":true}'
+Save-QmTextAtomic -Path $atomicPath -Text '{"excludeTimedOut":false,"excludeNoSerial":true}'
+$atomicRead = Get-Content -LiteralPath $atomicPath -Raw -Encoding UTF8
+Assert-True ($atomicRead -match 'excludeNoSerial') 'atomic settings save overwrites in place and stays readable'
+Remove-Item -LiteralPath $atomicDir -Recurse -Force -ErrorAction SilentlyContinue
+
 Write-Host ''
 Write-Host "Results: $($script:passed) passed, $($script:failed) failed"
 if ($script:failed -gt 0) { exit 1 }

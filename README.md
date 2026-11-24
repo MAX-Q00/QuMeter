@@ -21,7 +21,7 @@ Then export (e-automate is listed first, as recommended):
 - **Export all...** writes the Excel workbook, e-automate `.xlsx` and CSV, both MPS CSVs, and the general CSV into one folder.
 - **Remarks**: an editable box on the Manual tab and the Automate Settings tab (default Imported by QuMeter). It is written to the e-automate Remarks column. Leave it empty for a blank field. Optional tokens, replaced per printer: {date} {time} {ip} {serial} {model}. Saved in settings.json and config.json (eaRemarks), so scheduled QuMeter Auto runs use the same text.
 - **Export results CSV**: the general scan record (date, time, IP, model, serial, meters, status, errors). Save dialogs open in the last export folder.
-- **Edit mapping...** opens `e-automate.mapping.json` for custom column or meter-type names, or `"format": "advanced"`.
+- **Edit Export Mapping...** opens `e-automate.mapping.json` for custom column or meter-type names, or `"format": "advanced"`.
 
 The **Tips** panel on the right explains which file to use and how. It can be hidden and resized.
 

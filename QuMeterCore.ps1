@@ -5,7 +5,7 @@
 $script:QmCoreRoot = $PSScriptRoot
 if (-not $script:QmCoreRoot) { $script:QmCoreRoot = Split-Path -Parent $MyInvocation.MyCommand.Path }
 # Single source of truth for the app version. Bump this before tagging a GitHub release.
-$script:QmVersion = '2.2.3'
+$script:QmVersion = '2.2.4'
 $script:QmPublisher = 'QuSpace Studios LLC'
 $script:QmProductName = 'QuMeter'
 $script:QmCopyrightYear = '2026'
@@ -1012,6 +1012,31 @@ function Get-QmAutomateExperimentalBanner { return 'The Automate Tab is Experime
 function Get-QmAutomateExperimentalArgb { return @(0xB0, 0x00, 0x20) }
 function Get-QmPrimaryButtonArgb { return @(25, 135, 84) }
 function Get-QmImportMpsButtonText { return 'Import list (MPS)...' }
+function Get-QmEditExportMappingButtonText { return 'Edit Export Mapping...' }
+function Get-QmScanProgressText([int]$Done, [int]$Total) {
+    return ('{0} / {1} IPs' -f [math]::Max(0, [int]$Done), [math]::Max(0, [int]$Total))
+}
+function Test-QmFilterChangeCanRun([bool]$Busy) { return -not [bool]$Busy }
+function Save-QmTextAtomic {
+    param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][string]$Text)
+    $dir = Split-Path -Parent $Path
+    if ($dir -and -not (Test-Path -LiteralPath $dir)) {
+        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    }
+    $tmp = $Path + ".$PID.tmp"
+    $utf8 = New-Object System.Text.UTF8Encoding $true
+    [System.IO.File]::WriteAllText($tmp, $Text, $utf8)
+    if (Test-Path -LiteralPath $Path) {
+        try {
+            [System.IO.File]::Replace($tmp, $Path, $null)
+        } catch {
+            [System.IO.File]::Copy($tmp, $Path, $true)
+            Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+        }
+    } else {
+        Move-Item -LiteralPath $tmp -Destination $Path -Force
+    }
+}
 function Get-QmAboutDescription { return 'Reads lifetime meter counts over SNMP for e-automate and MPS imports.' }
 function Get-QmRunOnceEmptyCaption { return 'Add printers and save settings to run.' }
 function Get-QmTipsAutoCollapseWidth { return 1100 }
