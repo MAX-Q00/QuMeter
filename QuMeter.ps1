@@ -43,9 +43,20 @@ function Set-ProgressBarState($bar, [string]$state) {
     } catch { }
 }
 function Set-ScanProgressVisible([bool]$show) {
+    $vis = [bool]$show
+    if ($scanBarItem) { $scanBarItem.Visible = $vis }
+    if ($scanCountItem) {
+        $scanCountItem.Visible = $vis
+        if (-not $vis) { $scanCountItem.Text = '' }
+    }
+    if ($pubBar) { try { $pubBar.PerformLayout() } catch { } }
+}
+function Set-ScanProgressCount([int]$Done, [int]$Total) {
+    $text = Get-QmScanProgressText $Done $Total
+    if ($scanCountItem) { $scanCountItem.Text = $text }
     if ($scanBarItem) {
-        $scanBarItem.Visible = [bool]$show
-        if ($pubBar) { try { $pubBar.PerformLayout() } catch { } }
+        try { $scanBarItem.Maximum = [math]::Max(1, $Total) } catch { }
+        try { $scanBarItem.Value = [math]::Min([math]::Max(0, $Done), $scanBarItem.Maximum) } catch { }
     }
 }
 function Set-AppStatus([string]$text, $color = $null, [string]$ForTab = '') {
@@ -90,7 +101,10 @@ function Load-Settings {
     if (-not (Test-Path -LiteralPath $settingsPath)) { return $null }
     try { return Get-Content -LiteralPath $settingsPath -Raw -Encoding UTF8 | ConvertFrom-Json } catch { return $null }
 }
-function Save-Settings($obj) { ($obj | ConvertTo-Json -Depth 4) | Set-Content -LiteralPath $settingsPath -Encoding UTF8 }
+function Save-Settings($obj) {
+    $script:settingsCache = $obj
+    Save-QmTextAtomic -Path $settingsPath -Text ($obj | ConvertTo-Json -Depth 4)
+}
 
 $saved = Load-Settings
 $script:importNote = ''
@@ -210,11 +224,17 @@ $scanBarItem.Name = 'ScanProgress'
 $scanBarItem.AutoSize = $false
 $scanBarItem.Width = 120
 $scanBarItem.Visible = $false
-$scanBarItem.Margin = New-Object Windows.Forms.Padding(6, 3, 6, 3)
+$scanBarItem.Margin = New-Object Windows.Forms.Padding(6, 3, 4, 3)
 $scanBar = $scanBarItem
 Set-Acc $scanBarItem.ProgressBar 'Scan progress'
+$scanCountItem = New-Object Windows.Forms.ToolStripStatusLabel
+$scanCountItem.Name = 'ScanProgressText'
+$scanCountItem.Visible = $false
+$scanCountItem.Margin = New-Object Windows.Forms.Padding(0, 3, 8, 3)
+$scanCount = $scanCountItem
 [void]$pubBar.Items.Add($pubStatus)
 [void]$pubBar.Items.Add($scanBarItem)
+[void]$pubBar.Items.Add($scanCountItem)
 [void]$pubBar.Items.Add($pubBrand)
 [void]$pubBar.Items.Add($pubVer)
 [void]$pubBar.Items.Add($pubUpdate)
@@ -355,7 +375,7 @@ $M = New-Object Windows.Forms.Panel -Property @{ Dock = 'Top'; Height = 300 }
 # Add the SNMP row first so the later Dock=Top of $M sits above it.
 [void]$settingsHost.Controls.Add($settingsFlow)
 [void]$settingsHost.Controls.Add($M)
-$scanCol = Add-C $M (New-Object Windows.Forms.Panel -Property @{ Dock = 'Right'; Width = 150 })
+$scanCol = Add-C $M (New-Object Windows.Forms.Panel -Property @{ Dock = 'Right'; Width = 160 })
 New-L $M 'Printer &IPs, ranges, or CIDR (one per line or comma-separated)' 10 6 | Out-Null
 $targets = Add-C $M (New-Object Windows.Forms.TextBox -Property @{ Location = '10,24'; Size = '520,72'; Multiline = $true; ScrollBars = 'Vertical'; WordWrap = $false; AcceptsReturn = $true; Font = $fontMono })
 Set-Acc $targets 'Printer IPs, ranges, or CIDR'
@@ -387,10 +407,9 @@ $scanCancel.Visible = $false
 Set-Acc $scanCancel 'Stop scan'
 $tipsBtn = New-B $scanCol '&Tips' 10 118 130 28
 Set-Acc $tipsBtn 'Tips'
-$editMap = New-B $scanCol '&Edit mapping...' 10 158 130 28
-Set-Acc $editMap 'Edit mapping'
+$editMap = New-B $scanCol (Get-QmEditExportMappingButtonText) 6 158 148 28
+Set-Acc $editMap (Get-QmEditExportMappingButtonText)
 $f.AcceptButton = $scan
-$scanCount = $null
 
 $initialRemarks = 'Imported by QuMeter'
 if ($script:cfg -and $null -ne $script:cfg.eaRemarks) { $initialRemarks = [string]$script:cfg.eaRemarks }
@@ -539,7 +558,7 @@ Columns (ECI Meter Import): Equipment Number, Model, Serial, B\W, Color, Total C
 
 How to import it into e-automate:
  a. Try dropping the QuMeter e-automate .xlsx onto "Drop a file here" and click Import.
- b. In the file, Source is on the Import sheet in row 3. It must already exist in Lists and Codes (not Contract, Service Call or Web). Change it in Edit mapping... if your list uses a name other than SNMP.
+ b. In the file, Source is on the Import sheet in row 3. It must already exist in Lists and Codes (not Contract, Service Call or Web). Change it in Edit Export Mapping... if your list uses a name other than SNMP.
  c. Column headers are on row 8; data starts on row 9.
  d. If the utility rejects this generated workbook, download the official EA_MeterImport.xlsx template, set Source in the header, paste our data rows (not our header) under row 8, save, and import that official file.
  e-automate rejects a row if you send a meter type the equipment doesn't have, or leave out one it does have. Blank Mono/Color means the printer didn't report it; QuMeter never estimates.
@@ -569,7 +588,7 @@ Meter remarks
 The Meter remarks box is written into the e-automate Remarks column (and the e-automate sheet in the Excel workbook). The default is Imported by QuMeter. Leave it empty for a blank remarks field. Commas and quotes are escaped in the CSV. Optional tokens, replaced per printer: {date} {time} {ip} {serial} {model}. The same remarks text is used by Automate / QuMeter Auto (including scheduled runs) after it is saved.
 
 Custom column names / Advanced format
-If your template or meter types use different names than B\W, Color and Total Count, click Edit mapping... (e-automate.mapping.json). Set "format": "advanced" for the Meter Import Advanced layout (one row per meter: Meter Type + Reading, with Source).
+If your template or meter types use different names than B\W, Color and Total Count, click Edit Export Mapping... (e-automate.mapping.json). Set "format": "advanced" for the Meter Import Advanced layout (one row per meter: Meter Type + Reading, with Source).
 
 Scan tips
 - Community is usually "public". Use v1 if old printers time out on v2c.
@@ -780,18 +799,25 @@ $targets.Add_Enter({ Switch-ToIpSearchMode -OnFocus $true })
 $targets.Add_GotFocus({ Switch-ToIpSearchMode -OnFocus $true })
 $targets.Add_TextChanged({ Switch-ToIpSearchMode -OnFocus $false })
 function Persist {
-    if (-not $script:userSetTips -and -not $script:tipsSeen) { $script:hideTipsPref = $true }
-    $script:tipsSeen = $true
-    Save-Settings @{ community = $community.Text; version = $ver.SelectedItem.ToString(); port = [int]$port.Value; timeoutMs = [int]$timeout.Value; retries = [int]$retries.Value; concurrency = [int]$concurrency.Value; targets = (Repair-QmTargetText $targets.Text); excludeTimedOut = [bool]$excludeTo.Checked; excludeNoSerial = [bool]$excludeNoSerial.Checked; remarks = $remarks.Text; hideTips = [bool]$script:hideTipsPref; tipsSeen = $true; lastExportFolder = [string]$script:lastExportFolder; lastMpsImportFolder = [string]$script:lastMpsImportFolder; mpsSelectedCustomer = [string]$script:mpsSelectedCustomer }
-    if ($script:cfg) { $script:cfg.eaRemarks = $remarks.Text; $script:cfg.excludeNoSerial = [bool]$excludeNoSerial.Checked }
-    if (Test-Path -LiteralPath $configPath) {
+    if ($script:persistBusy) { return }
+    $script:persistBusy = $true
+    try {
+        if (-not $script:userSetTips -and -not $script:tipsSeen) { $script:hideTipsPref = $true }
+        $script:tipsSeen = $true
         try {
-            $cfgFile = Read-QmConfig -Path $configPath
-            $cfgFile.eaRemarks = $remarks.Text
-            $cfgFile.excludeNoSerial = [bool]$excludeNoSerial.Checked
-            Save-QmConfig -Config $cfgFile -Path $configPath
+            Save-Settings @{ community = $community.Text; version = $ver.SelectedItem.ToString(); port = [int]$port.Value; timeoutMs = [int]$timeout.Value; retries = [int]$retries.Value; concurrency = [int]$concurrency.Value; targets = (Repair-QmTargetText $targets.Text); excludeTimedOut = [bool]$excludeTo.Checked; excludeNoSerial = [bool]$excludeNoSerial.Checked; remarks = $remarks.Text; hideTips = [bool]$script:hideTipsPref; tipsSeen = $true; lastExportFolder = [string]$script:lastExportFolder; lastMpsImportFolder = [string]$script:lastMpsImportFolder; mpsSelectedCustomer = [string]$script:mpsSelectedCustomer }
         } catch { }
-    }
+        if ($script:cfg) { $script:cfg.eaRemarks = $remarks.Text; $script:cfg.excludeNoSerial = [bool]$excludeNoSerial.Checked }
+        if (Test-Path -LiteralPath $configPath) {
+            try {
+                $cfgFile = $script:cfg
+                if (-not $cfgFile) { $cfgFile = Read-QmConfig -Path $configPath }
+                $cfgFile.eaRemarks = $remarks.Text
+                $cfgFile.excludeNoSerial = [bool]$excludeNoSerial.Checked
+                Save-QmConfig -Config $cfgFile -Path $configPath
+            } catch { }
+        }
+    } finally { $script:persistBusy = $false }
 }
 function Get-ExportMapping {
     $map = Read-EaMapping -Path $mappingPath
@@ -962,15 +988,39 @@ function Complete-ManualScan($j) {
     $script:listSource = 'scan'
     Show-ManualResults
 }
-$excludeTo.Add_CheckedChanged({
-    if ($script:readings -and $script:readings.Count -gt 0) { Show-ManualResults }
-    Persist
-})
-$excludeNoSerial.Add_CheckedChanged({
-    if ($aExcludeNoSerial.Checked -ne $excludeNoSerial.Checked) { $aExcludeNoSerial.Checked = $excludeNoSerial.Checked }
-    if ($script:readings -and $script:readings.Count -gt 0) { Show-ManualResults }
-    Persist
-})
+$script:filterChangeBusy = $false
+$script:filterChangePending = $false
+function Invoke-FilterCheckboxChange {
+    if (-not (Test-QmFilterChangeCanRun $script:filterChangeBusy)) {
+        $script:filterChangePending = $true
+        return
+    }
+    $script:filterChangeBusy = $true
+    try {
+        do {
+            $script:filterChangePending = $false
+            if ($aExcludeNoSerial -and $excludeNoSerial -and $aExcludeNoSerial.Checked -ne $excludeNoSerial.Checked) {
+                $aExcludeNoSerial.Checked = $excludeNoSerial.Checked
+            }
+            if ($script:readings -and $script:readings.Count -gt 0) { Show-ManualResults }
+            Persist
+        } while ($script:filterChangePending)
+    } catch { }
+    finally { $script:filterChangeBusy = $false }
+}
+function Queue-FilterCheckboxChange {
+    try { if ($script:filterChangeTimer) { $script:filterChangeTimer.Stop() } } catch { }
+    if (-not $script:filterChangeTimer) {
+        $script:filterChangeTimer = New-Object Windows.Forms.Timer -Property @{ Interval = 60 }
+        $script:filterChangeTimer.Add_Tick({
+            try { $script:filterChangeTimer.Stop() } catch { }
+            Invoke-FilterCheckboxChange
+        })
+    }
+    $script:filterChangeTimer.Start()
+}
+$excludeTo.Add_CheckedChanged({ Queue-FilterCheckboxChange })
+$excludeNoSerial.Add_CheckedChanged({ Queue-FilterCheckboxChange })
 $copyIps.Add_Click({
     $text = $responded.Text
     if ([string]::IsNullOrWhiteSpace($text)) { Msg 'No responding IPs yet. Run a scan first.'; return }
@@ -1103,11 +1153,10 @@ $scan.Add_Click({
     $script:scanWasCancelled = $false
     $script:listSource = 'scan'
     $client = New-QuSnmpClient -Community $community.Text.Trim() -Port ([int]$port.Value) -TimeoutMs ([int]$timeout.Value) -Retries ([int]$retries.Value) -Version $ver.SelectedItem.ToString()
-    $scanBar.Maximum = [math]::Max(1, $hosts.Count); $scanBar.Value = 0
     Set-ProgressBarState $scanBar 'normal'
+    Set-ScanProgressCount 0 $hosts.Count
     Set-ScanProgressVisible $true
     Update-ExportButtons
-    if ($scanCount) { $scanCount.Text = "0 / $($hosts.Count)" }
     $script:scanJob = [QuMeterSnmp.ScanJob]::Start($client, [string[]]$hosts, [int]$concurrency.Value)
     Set-ScanControlsRunning $true
     Set-AppStatus "Scanning 0 of $($hosts.Count)..."
@@ -1125,9 +1174,8 @@ $script:scanTimer.Add_Tick({
     try {
         $j = $script:scanJob
         if (-not $j) { $script:scanTimer.Stop(); return }
-        $scanBar.Value = [math]::Min($j.Done, $scanBar.Maximum)
+        Set-ScanProgressCount $j.Done $j.Total
         if (-not $j.IsCompleted) {
-            if ($scanCount) { $scanCount.Text = "$($j.Done) / $($j.Total)" }
             if ($j.IsCancelled) { Set-AppStatus "Stopping scan... $($j.Done) of $($j.Total) checked." ([Drawing.Color]::FromArgb(150, 90, 0)) }
             else { Set-AppStatus "Scanning $($j.Done) of $($j.Total)..." }
             return
@@ -1285,7 +1333,7 @@ $aExcludeNoSerial = New-Object Windows.Forms.CheckBox -Property @{ Text = 'Only 
 $aExcludeNoSerial.Checked = [bool]$excludeNoSerial.Checked
 $aMap = New-Object Windows.Forms.TextBox
 $bMap = New-Object Windows.Forms.Button -Property @{ Text = 'Browse...' }
-$bMapEdit = New-Object Windows.Forms.Button -Property @{ Text = 'Edit mapping...' }
+$bMapEdit = New-Object Windows.Forms.Button -Property @{ Text = (Get-QmEditExportMappingButtonText) }
 
 $r = 0
 Add-PathStyle $pathTlp
@@ -1329,7 +1377,7 @@ $pathTlp.Controls.Add($bMapEdit, 3, $r)
 Set-Acc $aOut 'Output folder'; Set-Acc $aMps 'MPS drop folder'; Set-Acc $aLogF 'Log folder'
 Set-Acc $aRet 'Keep files (days)'; Set-Acc $aFmt 'e-automate format'; Set-Acc $aSrc 'Meter source'
 Set-Acc $aRemarks 'Meter remarks'; Set-Acc $aExcludeNoSerial 'Only show/include devices that are reporting serial numbers(Usually Only Printers)'
-Set-Acc $aMap 'Mapping file'; Set-Acc $bMapEdit 'Edit mapping'
+Set-Acc $aMap 'Mapping file'; Set-Acc $bMapEdit (Get-QmEditExportMappingButtonText)
 Set-Acc $aOutPath 'Resolved output folder'; Set-Acc $aMpsPath 'Resolved MPS drop folder'; Set-Acc $aLogPath 'Resolved log folder'
 $settingsGrid.Controls.Add($filesBox, 0, 1)
 $settingsGrid.SetColumnSpan($filesBox, 2)
@@ -1820,7 +1868,7 @@ $f.Add_FormClosing({
     if ($script:scanJob -and -not $script:scanJob.IsCompleted) {
         try { $script:scanJob.Cancel(); [void]$script:scanJob.Wait(3000) } catch { }
     }
-    foreach ($tm in @($script:scanTimer, $script:runTimer, $script:updateTimer, $script:updatePoll, $script:gridSelTimer)) { if ($tm) { try { $tm.Stop() } catch { } } }
+    foreach ($tm in @($script:scanTimer, $script:runTimer, $script:updateTimer, $script:updatePoll, $script:gridSelTimer, $script:filterChangeTimer)) { if ($tm) { try { $tm.Stop() } catch { } } }
     Stop-QmBackgroundUpdateCheck
     if (-not $_.Cancel) {
         try {
