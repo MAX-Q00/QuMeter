@@ -572,7 +572,7 @@ $split.Panel2.Add_Resize({ Layout-TipsPane })
 $tipsHeader.Add_Resize({ Layout-TipsPane })
 function Apply-TipsVisibility {
     $width = 1100
-    try { $width = [int]$f.ClientSize.Width } catch { }
+    try { $width = [int]$f.Width } catch { }
     $collapse = Test-QmTipsShouldCollapse -Width $width -HidePref ([bool]$script:hideTipsPref) -PinnedOpen ([bool]$script:tipsPinnedOpen) -Threshold (Get-QmTipsAutoCollapseWidth)
     $split.Panel2Collapsed = [bool]$collapse
     if ($tipsBtn) { $tipsBtn.Visible = $true }
