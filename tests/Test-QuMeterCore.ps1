@@ -219,6 +219,190 @@ try {
     Assert-True ($se4.run.errorStage -eq 'config' -and $se4.run.error -match 'No printers') 'config error in status'
 } finally { try { if ($sim -and -not $sim.HasExited) { Stop-Process -Id $sim.Id -Force } } catch {} }
 
+Write-Host '=== MPS list import ==='
+$fx = Join-Path $here 'fixtures/mps-import-sample.csv'
+$imp = Import-QmMpsList -Path $fx
+Assert-Eq $imp.TotalRows 6 'sample fixture imports six data rows'
+Assert-Eq $imp.WithIpCount 4 'four rows have a usable IPv4 address'
+Assert-Eq $imp.NoIpCount 2 'blank and invalid IPs are kept as no-IP rows'
+Assert-Eq (@($imp.Customers) -join '|') 'Cedar Park Office|Harbor Goods|Maple Dental' 'customer names are unique and sorted'
+Assert-Eq $imp.Rows[0].SystemName 'cedar-laser-01' 'Sytem name typo header maps to SystemName'
+Assert-Eq $imp.Rows[0].Customer 'Cedar Park Office' 'Customer Description maps to Customer'
+Assert-Eq $imp.Rows[0].CustomerCode 'CSTM001' 'Customer code is stored'
+Assert-Eq $imp.Rows[0].Brand 'Contoso' 'Brand is stored'
+Assert-Eq $imp.Rows[0].Serial 'SN-AAA111' 'SerialNumber maps to Serial'
+Assert-Eq $imp.Rows[0].AssetNumber 'AST-100' 'AssetNumber is stored'
+Assert-Eq $imp.Rows[0].Ip '203.0.113.10' 'Ip Address maps to Ip'
+Assert-Eq $imp.Rows[3].HasIp $false 'row with a blank IP is kept and flagged'
+Assert-Eq $imp.Rows[3].Serial 'SN-DDD444' 'no-IP row still keeps serial'
+Assert-Eq $imp.Rows[5].HasIp $false 'invalid IPv4 is treated as no IP'
+Assert-Eq $imp.Rows[5].IpRaw '999.1.1.1' 'invalid IP raw value is preserved'
+
+$cedar = Get-QmMpsRowsForCustomer -Rows $imp.Rows -Customer 'Cedar Park Office'
+Assert-Eq $cedar.Count 2 'customer filter returns that customer only'
+Assert-Eq ((Get-QmMpsIpList $cedar) -join ',') '203.0.113.10,203.0.113.11' 'customer IP list is unique and in file order'
+$allIps = Get-QmMpsIpList (Get-QmMpsRowsForCustomer -Rows $imp.Rows -Customer 'All customers')
+Assert-Eq ($allIps -join ',') '203.0.113.10,203.0.113.11,203.0.113.20,203.0.113.30' 'All customers lists every usable IP once'
+
+$alt = @(
+    'Report title: made-up fleet',
+    '',
+    'IP,Customer,Serial Number,Manufacturer,Model',
+    '203.0.113.40,Blue Mesa Shop,SN-ZZZ001,Contoso,Contoso Laser 100',
+    '',
+    '203.0.113.40,Blue Mesa Shop,SN-ZZZ002,Contoso,Contoso Laser 101',
+    'not-an-ip,Blue Mesa Shop,SN-ZZZ003,Contoso,Contoso Laser 102',
+    '   ,,,,'
+)
+$altPath = Join-Path $tmp 'mps-alt-headers.csv'
+$alt -join "`r`n" | Set-Content -LiteralPath $altPath -Encoding UTF8
+$impAlt = Import-QmMpsList -Path $altPath
+Assert-Eq $impAlt.HeaderIndex 2 'title and blank rows above the header are skipped'
+Assert-Eq $impAlt.TotalRows 3 'blank trailing row is skipped; invalid IP is kept'
+Assert-Eq $impAlt.WithIpCount 2 'alternate IP header is recognized'
+Assert-Eq $impAlt.Rows[0].Brand 'Contoso' 'Manufacturer maps to Brand'
+Assert-Eq $impAlt.Rows[0].Customer 'Blue Mesa Shop' 'Customer header maps'
+Assert-Eq $impAlt.Rows[2].HasIp $false 'non-IPv4 host value is treated as no IP'
+$dupIps = Get-QmMpsIpList $impAlt.Rows
+Assert-Eq ($dupIps -join ',') '203.0.113.40' 'duplicate IPs appear once in the scan list'
+
+$scsv = @(
+    'Customer Description;Ip Address;Model;SerialNumber',
+    'Willow Library;203.0.113.50;Northwind Ink 8;SN-WIL001',
+    'Willow Library;203.0.113.51;Northwind Ink 8;SN-WIL002'
+) -join "`n"
+$scsvPath = Join-Path $tmp 'mps-semicolon.csv'
+Set-Content -LiteralPath $scsvPath -Value $scsv -Encoding UTF8
+$impSemi = Import-QmMpsList -Path $scsvPath
+Assert-Eq $impSemi.WithIpCount 2 'semicolon CSV is detected and parsed'
+
+$xlsxHeaders = @('Customer Description','Brand','Model','SerialNumber','Ip Address','Sytem name')
+$xlsxRows = New-Object System.Collections.Generic.List[object]
+Add-QuXlsxRow $xlsxRows $xlsxHeaders
+Add-QuXlsxRow $xlsxRows @('Pine Ridge School','Contoso','Contoso MFP 50','SN-PRS001','203.0.113.60','pine-mfp')
+Add-QuXlsxRow $xlsxRows @('Pine Ridge School','Contoso','Contoso MFP 50','SN-PRS002','','')
+Add-QuXlsxRow $xlsxRows @('','','','','','')
+Add-QuXlsxRow $xlsxRows @('Oak Harbor Clinic','Fabrikam','Fabrikam Color 10','SN-OHC001','203.0.113.70','oak-color')
+$xlsxPath = Join-Path $tmp 'mps-import.xlsx'
+Write-QuXlsx -Path $xlsxPath -Sheets @(@{ Name = 'Fleet'; Rows = $xlsxRows.ToArray() })
+$impX = Import-QmMpsList -Path $xlsxPath
+Assert-Eq $impX.SheetName 'Fleet' 'xlsx reader uses the first sheet name'
+Assert-Eq $impX.TotalRows 3 'xlsx blank row is skipped'
+Assert-Eq $impX.WithIpCount 2 'xlsx IPs are read from inline strings'
+Assert-Eq $impX.Rows[0].SystemName 'pine-mfp' 'xlsx typo header Sytem name is mapped'
+Assert-Eq (@($impX.Customers) -join '|') 'Oak Harbor Clinic|Pine Ridge School' 'xlsx customers are collected'
+
+$store = Join-Path $tmp 'mps-import.json'
+Save-QmMpsImport -Import $impX -Path $store -SelectedCustomer 'Pine Ridge School'
+$round = Read-QmMpsImport -Path $store
+Assert-Eq $round.TotalRows 3 'saved import round-trips row count'
+Assert-Eq $round.SelectedCustomer 'Pine Ridge School' 'selected customer is persisted'
+Assert-Eq $round.Rows[0].Ip '203.0.113.60' 'saved IPs round-trip'
+Assert-Eq $round.Rows[1].HasIp $false 'saved no-IP flag round-trips'
+Assert-Eq $round.Rows[0].Customer 'Pine Ridge School' 'saved customer name round-trips'
+
+# Shared-strings xlsx (typical Excel layout), built without customer data from any external report.
+Add-Type -AssemblyName System.IO.Compression
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+$ssPath = Join-Path $tmp 'mps-shared.xlsx'
+if (Test-Path $ssPath) { Remove-Item $ssPath -Force }
+$ssZip = [System.IO.Compression.ZipFile]::Open($ssPath, 'Create')
+function Add-ZipText($Zip, $Name, $Text) {
+    $e = $Zip.CreateEntry($Name)
+    $st = $e.Open(); $bw = New-Object System.IO.StreamWriter($st, [Text.UTF8Encoding]::new($false))
+    $bw.Write($Text); $bw.Dispose(); $st.Dispose()
+}
+$shared = @'
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="10" uniqueCount="10">
+  <si><t>Customer Description</t></si>
+  <si><t>Ip Address</t></si>
+  <si><t>Model</t></si>
+  <si><t>SerialNumber</t></si>
+  <si><t>Riverstone Bakery</t></si>
+  <si><t>203.0.113.80</t></si>
+  <si><t>Contoso Laser 80</t></si>
+  <si><t>SN-RSB001</t></si>
+  <si><t>Riverstone Bakery</t></si>
+  <si><t>SN-RSB002</t></si>
+</sst>
+'@
+$sheet = @'
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <sheetData>
+    <row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1" t="s"><v>1</v></c><c r="C1" t="s"><v>2</v></c><c r="D1" t="s"><v>3</v></c></row>
+    <row r="2"><c r="A2" t="s"><v>4</v></c><c r="B2" t="s"><v>5</v></c><c r="C2" t="s"><v>6</v></c><c r="D2" t="s"><v>7</v></c></row>
+    <row r="3"><c r="A3" t="s"><v>8</v></c><c r="C3" t="s"><v>6</v></c><c r="D3" t="s"><v>9</v></c></row>
+  </sheetData>
+</worksheet>
+'@
+$wb = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="List" sheetId="1" r:id="rId1"/></sheets></workbook>'
+$wbRels = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>'
+$types = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/sharedStrings.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/></Types>'
+$rels = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>'
+Add-ZipText $ssZip '[Content_Types].xml' $types
+Add-ZipText $ssZip '_rels/.rels' $rels
+Add-ZipText $ssZip 'xl/workbook.xml' $wb
+Add-ZipText $ssZip 'xl/_rels/workbook.xml.rels' $wbRels
+Add-ZipText $ssZip 'xl/worksheets/sheet1.xml' $sheet
+Add-ZipText $ssZip 'xl/sharedStrings.xml' $shared
+$ssZip.Dispose()
+$impSs = Import-QmMpsList -Path $ssPath
+Assert-Eq $impSs.TotalRows 2 'shared-string xlsx imports both rows'
+Assert-Eq $impSs.WithIpCount 1 'shared-string row with a skipped IP cell is no-IP'
+Assert-Eq $impSs.Rows[0].Customer 'Riverstone Bakery' 'shared strings resolve customer text'
+Assert-Eq $impSs.Rows[0].Ip '203.0.113.80' 'shared strings resolve IP text'
+Assert-Eq $impSs.Rows[1].HasIp $false 'omitted IP cell is treated as no IP'
+
+$scan = New-Object QuMeterSnmp.PrinterReading
+$scan.Ip = '203.0.113.60'; $scan.Model = 'Live Model'; $scan.Serial = 'LIVE-SN'; $scan.Total = '12345'; $scan.Status = 'OK'
+$merged = Merge-QmImportedReadings -ScanReadings @($scan) -ImportRows $impX.Rows
+Assert-Eq $merged.Count 3 'merge keeps no-IP import rows and the other customer'
+Assert-Eq $merged[0].Customer 'Pine Ridge School' 'merge copies customer onto the scan result'
+Assert-Eq $merged[0].Model 'Live Model' 'scan model wins when present'
+Assert-Eq $merged[0].Total '12345' 'scan meters are kept'
+Assert-Eq $merged[0].SystemName 'pine-mfp' 'imported system name is copied'
+$noScan = @($merged | Where-Object { $_.Status -eq 'Imported' -or $_.Status -eq 'No IP' })
+Assert-Eq $noScan.Count 2 'unscanned import rows stay in the merged list'
+
+$reading = ConvertTo-QmImportedReading $imp.Rows[0]
+Assert-Eq $reading.Status 'Imported' 'imported row with an IP is marked Imported'
+Assert-Eq $reading.Customer 'Cedar Park Office' 'imported reading carries customer'
+$readingNo = ConvertTo-QmImportedReading $imp.Rows[3]
+Assert-Eq $readingNo.Status 'No IP' 'imported row without an IP is marked No IP'
+Assert-True (-not (Test-QmRespondedStatus 'Imported')) 'Imported does not count as a scan response'
+Assert-True (-not (Test-QmRespondedStatus 'No IP')) 'No IP does not count as a scan response'
+Assert-True (Test-QmRespondedStatus 'OK') 'OK still counts as a scan response'
+$ipText = Get-QuMeterRespondedIpText -Readings @($reading, $readingNo, $scan)
+Assert-Eq $ipText '203.0.113.60' 'Responding IPs ignores Imported and No IP rows'
+
+$missing = Join-Path $tmp 'no-ip-col.csv'
+"Customer,Model,SerialNumber`nBlue Mesa Shop,Contoso Laser 100,SN-ZZZ001" | Set-Content $missing
+$threw = $false
+try { Import-QmMpsList -Path $missing | Out-Null } catch { $threw = $true; Assert-True ($_.Exception.Message -match 'no IP address column') 'missing IP column explains the error' }
+Assert-True $threw 'missing IP column fails the import'
+
+$xls = Join-Path $tmp 'old.xls'
+'placeholder' | Set-Content $xls
+$threwXls = $false
+try { Import-QmMpsList -Path $xls | Out-Null } catch { $threwXls = $true; Assert-True ($_.Exception.Message -match '\.xls') '.xls files are rejected with a save-as hint' }
+Assert-True $threwXls '.xls import throws'
+
+$emptyCust = @(
+    'Customer code,Customer Description,Model,SerialNumber,Ip Address',
+    'CSTM900,,Contoso Laser 9,SN-UNC001,203.0.113.90'
+) -join "`n"
+$emptyPath = Join-Path $tmp 'mps-unnamed.csv'
+Set-Content -LiteralPath $emptyPath -Value $emptyCust -Encoding UTF8
+$impUn = Import-QmMpsList -Path $emptyPath
+Assert-Eq $impUn.Rows[0].Customer 'CSTM900' 'blank customer description falls back to customer code'
+
+$nonePath = Join-Path $tmp 'mps-none.csv'
+"Customer Description,Ip Address`n, " | Set-Content $nonePath
+$impNone = Import-QmMpsList -Path $nonePath
+Assert-Eq $impNone.TotalRows 0 'rows with no useful fields are skipped'
+
 Write-Host ''
 Write-Host "Results: $($script:passed) passed, $($script:failed) failed"
 if ($script:failed -gt 0) { exit 1 }

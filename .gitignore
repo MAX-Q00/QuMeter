@@ -1,4 +1,5 @@
 settings.json
+mps-import.json
 config.json
 *.log
 output/

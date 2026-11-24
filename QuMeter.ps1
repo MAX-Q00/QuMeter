@@ -179,6 +179,14 @@ $pubAbout.Add_Click({ Show-About })
 $script:hideTipsPref = [bool]($saved -and ($saved.PSObject.Properties.Name -contains 'hideTips') -and $saved.hideTips)
 $script:lastExportFolder = $null
 if ($saved -and ($saved.PSObject.Properties.Name -contains 'lastExportFolder') -and $saved.lastExportFolder) { $script:lastExportFolder = [string]$saved.lastExportFolder }
+$script:lastMpsImportFolder = $null
+if ($saved -and ($saved.PSObject.Properties.Name -contains 'lastMpsImportFolder') -and $saved.lastMpsImportFolder) { $script:lastMpsImportFolder = [string]$saved.lastMpsImportFolder }
+$script:mpsImportPath = Get-QmMpsImportPath $app
+$script:mpsImport = $null
+$script:mpsSelectedCustomer = 'All customers'
+$script:listSource = ''
+$script:updatingCustomerFilter = $false
+$script:lastScanReadings = @()
 $split = New-Object Windows.Forms.SplitContainer
 $split.Width = 1000
 $split.Height = 700
@@ -199,7 +207,7 @@ $grid = Add-C $left (New-Object Windows.Forms.DataGridView -Property @{
     AllowUserToResizeColumns = $true; AllowUserToOrderColumns = $true
     ShowCellToolTips = $true
 })
-$top = Add-C $left (New-Object Windows.Forms.Panel -Property @{ Dock = 'Top'; Height = 328 })
+$top = Add-C $left (New-Object Windows.Forms.Panel -Property @{ Dock = 'Top'; Height = 368 })
 $bottom = Add-C $left (New-Object Windows.Forms.Panel -Property @{ Dock = 'Bottom'; Height = 78 })
 $M = $top
 
@@ -248,9 +256,11 @@ $scanCancel.FlatAppearance.BorderSize = 0
 $scanCancel.UseVisualStyleBackColor = $false
 $scanCancel.Visible = $false
 Set-Acc $scanCancel 'Stop scan'
-$scanBar = Add-C $scanCol (New-Object Windows.Forms.ProgressBar -Property @{ Location = '10,136'; Size = '80,18' })
+$importMps = New-B $scanCol 'Import List (&MPS)' 10 134 130 28
+Set-Acc $importMps 'Import List (MPS)'
+$scanBar = Add-C $scanCol (New-Object Windows.Forms.ProgressBar -Property @{ Location = '10,168'; Size = '80,18' })
 Set-Acc $scanBar 'Scan progress'
-$scanCount = New-L $scanCol '' 94 136
+$scanCount = New-L $scanCol '' 94 168
 $scanCount.AutoSize = $true
 Set-Acc $scanCount 'Addresses checked'
 $f.AcceptButton = $scan
@@ -261,35 +271,46 @@ if ($saved -and ($saved.PSObject.Properties.Name -contains 'remarks')) { $initia
 $lblRemarks = New-L $M '&Meter remarks' 10 163
 $remarks = New-T $M 110 160 420 $initialRemarks
 Set-Acc $remarks 'Meter remarks'
-$editMap = New-B $scanCol '&Edit mapping...' 10 158 130 26
+$editMap = New-B $scanCol '&Edit mapping...' 10 190 130 26
 Set-Acc $editMap 'Edit mapping'
 
-$excludeTo = Add-C $M (New-Object Windows.Forms.CheckBox -Property @{ Text = "Don't show printers that timed out in the grid or in exports"; Location = '10,190'; AutoSize = $true })
+$lblCustomer = New-L $M '&Customer' 10 193
+$customerFilter = Add-C $M (New-Object Windows.Forms.ComboBox -Property @{ Location = '78,190'; Width = 452; DropDownStyle = 'DropDownList' })
+Set-Acc $customerFilter 'Customer'
+$customerFilter.Enabled = $false
+[void]$customerFilter.Items.Add('No imported list')
+$customerFilter.SelectedIndex = 0
+
+$excludeTo = Add-C $M (New-Object Windows.Forms.CheckBox -Property @{ Text = "Don't show printers that timed out in the grid or in exports"; Location = '10,218'; AutoSize = $true })
 Set-Acc $excludeTo 'Hide printers that timed out'
 if ($saved.PSObject.Properties.Name -contains 'excludeTimedOut' -and $saved.excludeTimedOut) { $excludeTo.Checked = $true }
 
-$excludeNoSerial = Add-C $M (New-Object Windows.Forms.CheckBox -Property @{ Text = "Don't show printers with no serial number in the grid or in exports"; Location = '10,212'; AutoSize = $true })
+$excludeNoSerial = Add-C $M (New-Object Windows.Forms.CheckBox -Property @{ Text = "Don't show printers with no serial number in the grid or in exports"; Location = '10,240'; AutoSize = $true })
 Set-Acc $excludeNoSerial 'Hide printers with no serial number'
 if ($script:cfg -and $script:cfg.excludeNoSerial) { $excludeNoSerial.Checked = $true }
 if ($saved -and ($saved.PSObject.Properties.Name -contains 'excludeNoSerial') -and $saved.excludeNoSerial) { $excludeNoSerial.Checked = $true }
 
-New-L $M 'Responding IPs (did not time out) - copy this list to rescan only those printers:' 10 234 | Out-Null
-$responded = Add-C $M (New-Object Windows.Forms.TextBox -Property @{ Location = '10,252'; Size = '520,54'; Multiline = $true; ReadOnly = $true; ScrollBars = 'Both'; WordWrap = $false; Font = $fontMono; BackColor = 'White' })
+New-L $M 'Responding IPs (did not time out) - copy this list to rescan only those printers:' 10 264 | Out-Null
+$responded = Add-C $M (New-Object Windows.Forms.TextBox -Property @{ Location = '10,282'; Size = '520,54'; Multiline = $true; ReadOnly = $true; ScrollBars = 'Both'; WordWrap = $false; Font = $fontMono; BackColor = 'White' })
 Set-Acc $responded 'Responding IPs'
-$copyIps = New-B $scanCol '&Copy' 10 252 130 28
+$copyIps = New-B $scanCol '&Copy' 10 282 130 28
 Set-Acc $copyIps 'Copy responding IPs'
 
-foreach ($col in @('IP','Model','Serial','Total','Mono','Color','Status','SysDescr','Error')) {
+foreach ($col in @('IP','Customer','Brand','Model','Serial','Asset','System','Total','Mono','Color','Status','SysDescr','Error')) {
     [void]$grid.Columns.Add($col, $col)
 }
 $grid.Columns['IP'].Width = 110
-$grid.Columns['Model'].Width = 160
-$grid.Columns['Serial'].Width = 120
+$grid.Columns['Customer'].Width = 150
+$grid.Columns['Brand'].Width = 80
+$grid.Columns['Model'].Width = 150
+$grid.Columns['Serial'].Width = 110
+$grid.Columns['Asset'].Width = 80
+$grid.Columns['System'].Width = 110
 $grid.Columns['Total'].Width = 70
 $grid.Columns['Mono'].Width = 70
 $grid.Columns['Color'].Width = 70
 $grid.Columns['Status'].Width = 80
-$grid.Columns['SysDescr'].Width = 200
+$grid.Columns['SysDescr'].Width = 160
 $grid.Columns['Error'].MinimumWidth = 80
 $grid.Columns['Error'].AutoSizeMode = 'Fill'
 $grid.Add_CellToolTipTextNeeded({
@@ -317,6 +338,9 @@ $st.AutoSize = $true
 
 $manualTips = @"
 TIPS - USING THE MANUAL OUTPUT
+
+IMPORT LIST (MPS)
+Click Import List (MPS) under Scan to load an MPS fleet report (.xlsx or .csv). QuMeter reads the IP, customer, model, serial, and other columns, fills the results list, and stores that list until you import again. A new scan reads meters for the IPs currently shown and keeps the imported customer details. Use the Customer drop-down to show one customer or All customers; Scan then queries only those IPs. Rows with no IP stay in the list but are not scanned. The imported list is saved in mps-import.json and comes back after you restart the app.
 
 RECOMMENDED: e-automate workbook  (Export e-automate)
 Best path for updating meters on many serial numbers at once. Only printers that answered AND reported a serial are included.
@@ -399,15 +423,121 @@ $M.Add_Resize({
     $targets.Width = $fieldW
     $responded.Width = $fieldW
     $remarks.Width = [math]::Max(160, $fieldW - 100)
+    if ($customerFilter) { $customerFilter.Width = [math]::Max(160, $fieldW - 68) }
 })
 
 $script:scanJob = $null
+function Get-MpsFilterRows {
+    if (-not $script:mpsImport) { return @() }
+    return @(Get-QmMpsRowsForCustomer -Rows $script:mpsImport.Rows -Customer $script:mpsSelectedCustomer)
+}
+function Set-MpsCustomerFilterItems([string]$Selected) {
+    $script:updatingCustomerFilter = $true
+    try {
+        $customerFilter.Items.Clear()
+        if (-not $script:mpsImport) {
+            [void]$customerFilter.Items.Add('No imported list')
+            $customerFilter.SelectedIndex = 0
+            $customerFilter.Enabled = $false
+            return
+        }
+        [void]$customerFilter.Items.Add('All customers')
+        foreach ($name in @(Get-QmMpsCustomerNames $script:mpsImport.Rows)) { [void]$customerFilter.Items.Add($name) }
+        $pick = $Selected
+        if ([string]::IsNullOrWhiteSpace($pick)) { $pick = 'All customers' }
+        $idx = $customerFilter.Items.IndexOf($pick)
+        if ($idx -lt 0) { $idx = 0; $pick = 'All customers' }
+        $customerFilter.SelectedIndex = $idx
+        $script:mpsSelectedCustomer = $pick
+        $customerFilter.Enabled = $true
+    } finally { $script:updatingCustomerFilter = $false }
+}
+function Show-MpsImportedList {
+    $rows = Get-MpsFilterRows
+    $ips = @(Get-QmMpsIpList $rows)
+    $targets.Text = ($ips -join "`r`n")
+    $script:readings.Clear()
+    foreach ($row in $rows) { [void]$script:readings.Add((ConvertTo-QmImportedReading $row)) }
+    $script:listSource = 'import'
+    $script:scanWasCancelled = $false
+    Show-ManualResults
+}
+function Apply-MpsImport($Import, [string]$Selected = 'All customers') {
+    $script:mpsImport = $Import
+    Set-MpsCustomerFilterItems $Selected
+    if ($Import) {
+        Save-QmMpsImport -Import $Import -Path $script:mpsImportPath -SelectedCustomer $script:mpsSelectedCustomer
+    }
+    Show-MpsImportedList
+    Persist
+}
+function Restore-MpsImport {
+    $imp = Read-QmMpsImport -Path $script:mpsImportPath
+    if (-not $imp -or -not $imp.Rows -or $imp.Rows.Count -eq 0) { return }
+    $sel = [string]$imp.SelectedCustomer
+    if ($saved -and ($saved.PSObject.Properties.Name -contains 'mpsSelectedCustomer') -and $saved.mpsSelectedCustomer) {
+        $sel = [string]$saved.mpsSelectedCustomer
+    }
+    $script:mpsImport = $imp
+    Set-MpsCustomerFilterItems $sel
+    Show-MpsImportedList
+}
+
 $load.Add_Click({
     $d = New-Object Windows.Forms.OpenFileDialog -Property @{ Filter = 'Text files (*.txt;*.csv)|*.txt;*.csv|All files (*.*)|*.*'; Title = 'Load printer list' }
     if ($d.ShowDialog() -eq 'OK') { $targets.Text = [System.IO.File]::ReadAllText($d.FileName) }
 })
+$importMps.Add_Click({
+    if ($script:scanJob) { return }
+    $d = New-Object Windows.Forms.OpenFileDialog -Property @{
+        Title = 'Import List (MPS)'
+        Filter = 'MPS list (*.xlsx;*.csv)|*.xlsx;*.csv|Excel workbook (*.xlsx)|*.xlsx|CSV (*.csv)|*.csv|All files (*.*)|*.*'
+    }
+    if ($script:lastMpsImportFolder -and (Test-Path -LiteralPath $script:lastMpsImportFolder)) {
+        $d.InitialDirectory = $script:lastMpsImportFolder
+    }
+    if ($d.ShowDialog() -ne 'OK') { return }
+    $script:lastMpsImportFolder = Split-Path -Parent $d.FileName
+    try {
+        $imp = Import-QmMpsList -Path $d.FileName
+    } catch {
+        Msg $_.Exception.Message 'Warning'
+        return
+    }
+    if (-not $imp -or $imp.TotalRows -eq 0) {
+        Msg 'No printer rows were found in that file.'
+        return
+    }
+    Apply-MpsImport $imp 'All customers'
+})
+$customerFilter.Add_SelectedIndexChanged({
+    if ($script:updatingCustomerFilter) { return }
+    if (-not $script:mpsImport) { return }
+    $sel = [string]$customerFilter.SelectedItem
+    if ([string]::IsNullOrWhiteSpace($sel)) { return }
+    $script:mpsSelectedCustomer = $sel
+    if (Test-Path -LiteralPath $script:mpsImportPath) {
+        try { Save-QmMpsImport -Import $script:mpsImport -Path $script:mpsImportPath -SelectedCustomer $sel } catch { }
+    }
+    if ($script:listSource -eq 'scan') {
+        $importRows = Get-MpsFilterRows
+        $ips = @(Get-QmMpsIpList $importRows)
+        $ipSet = @{}
+        foreach ($ip in $ips) { $ipSet[$ip] = $true }
+        $scanRows = @($script:lastScanReadings | Where-Object { $_.Ip -and $ipSet.ContainsKey([string]$_.Ip) })
+        $script:readings.Clear()
+        $merged = @(Merge-QmImportedReadings -ScanReadings $scanRows -ImportRows $importRows)
+        foreach ($r in $merged) { [void]$script:readings.Add($r) }
+        $targets.Text = ($ips -join "`r`n")
+        Persist
+        Show-ManualResults
+        return
+    }
+    Show-MpsImportedList
+    Persist
+})
 function Persist {
-    Save-Settings @{ community = $community.Text; version = $ver.SelectedItem.ToString(); port = [int]$port.Value; timeoutMs = [int]$timeout.Value; retries = [int]$retries.Value; concurrency = [int]$concurrency.Value; targets = $targets.Text; excludeTimedOut = [bool]$excludeTo.Checked; excludeNoSerial = [bool]$excludeNoSerial.Checked; remarks = $remarks.Text; hideTips = [bool]$hideTips.Checked; lastExportFolder = [string]$script:lastExportFolder }
+    Save-Settings @{ community = $community.Text; version = $ver.SelectedItem.ToString(); port = [int]$port.Value; timeoutMs = [int]$timeout.Value; retries = [int]$retries.Value; concurrency = [int]$concurrency.Value; targets = $targets.Text; excludeTimedOut = [bool]$excludeTo.Checked; excludeNoSerial = [bool]$excludeNoSerial.Checked; remarks = $remarks.Text; hideTips = [bool]$hideTips.Checked; lastExportFolder = [string]$script:lastExportFolder; lastMpsImportFolder = [string]$script:lastMpsImportFolder; mpsSelectedCustomer = [string]$script:mpsSelectedCustomer }
     if ($script:cfg) { $script:cfg.eaRemarks = $remarks.Text; $script:cfg.excludeNoSerial = [bool]$excludeNoSerial.Checked }
     if (Test-Path -LiteralPath $configPath) {
         try {
@@ -453,7 +583,7 @@ function Get-ScanCounts {
         Ok = @($all | Where-Object { $_.Status -eq 'OK' }).Count
         Timeout = @($all | Where-Object { $_.Status -eq 'Timeout' }).Count
         Cancelled = @($all | Where-Object { $_.Status -eq 'Cancelled' }).Count
-        Responded = @($all | Where-Object { $_.Status -ne 'Timeout' -and $_.Status -ne 'Cancelled' }).Count
+        Responded = @($all | Where-Object { Test-QmRespondedStatus $_.Status }).Count
         OkSerial = @($all | Where-Object { $_.Status -eq 'OK' -and -not [string]::IsNullOrWhiteSpace($_.Serial) }).Count
     }
 }
@@ -487,13 +617,28 @@ function Show-ManualResults {
     $responded.Text = Get-QuMeterRespondedIpText -Readings @($script:readings) -ExcludeNoSerial $excludeNoSerial.Checked
     $visible = Get-CurrentReadings
     foreach ($r in $visible) {
-        $i = $grid.Rows.Add($r.Ip, $r.Model, $r.Serial, $r.Total, $r.Mono, $r.Color, $r.Status, $r.SysDescr, $r.ErrorMessage)
+        $i = $grid.Rows.Add($r.Ip, $r.Customer, $r.Brand, $r.Model, $r.Serial, $r.AssetNumber, $r.SystemName, $r.Total, $r.Mono, $r.Color, $r.Status, $r.SysDescr, $r.ErrorMessage)
         if ($r.Status -eq 'Cancelled') { $grid.Rows[$i].DefaultCellStyle.ForeColor = [Drawing.Color]::FromArgb(150, 90, 0) }
+        elseif ($r.Status -eq 'Imported') { $grid.Rows[$i].DefaultCellStyle.ForeColor = [Drawing.SystemColors]::ControlText }
+        elseif ($r.Status -eq 'No IP') { $grid.Rows[$i].DefaultCellStyle.ForeColor = [Drawing.Color]::DimGray }
         elseif ($r.Status -ne 'OK') { $grid.Rows[$i].DefaultCellStyle.ForeColor = [Drawing.Color]::Firebrick }
     }
     $grid.ClearSelection()
     $c = Get-ScanCounts
     $shown = @($visible).Count
+    if ($script:listSource -eq 'import') {
+        $ipCount = @($visible | Where-Object { $_.Status -eq 'Imported' }).Count
+        $noIpCount = @($visible | Where-Object { $_.Status -eq 'No IP' }).Count
+        $who = $script:mpsSelectedCustomer
+        if ([string]::IsNullOrWhiteSpace($who) -or $who -eq 'All customers') { $who = 'all customers' }
+        $src = ''
+        if ($script:mpsImport -and $script:mpsImport.SourceName) { $src = " from $($script:mpsImport.SourceName)" }
+        Set-ProgressBarState $scanBar 'normal'
+        Set-AppStatus "Imported list$src ($who): $shown row(s), $ipCount with an IP, $noIpCount with no IP. Click Scan to read meters for the IPs shown."
+        if ($scanCount) { $scanCount.Text = '' }
+        Update-ExportButtons
+        return
+    }
     $checked = $c.Total - $c.Cancelled
     if ($script:scanWasCancelled) {
         Set-ProgressBarState $scanBar 'paused'
@@ -512,6 +657,8 @@ function Set-ScanControlsRunning([bool]$running) {
     $scanCancel.Visible = $running
     $scanCancel.Enabled = $running
     $load.Enabled = -not $running
+    $importMps.Enabled = -not $running
+    $customerFilter.Enabled = (-not $running) -and [bool]$script:mpsImport
     $f.UseWaitCursor = [bool]$running
     $f.AcceptButton = $(if ($running) { $scanCancel } else { $scan })
     Update-ExportButtons
@@ -528,8 +675,16 @@ function Complete-ManualScan($j) {
         return
     }
     $script:readings.Clear()
-    if ($j.Results) { foreach ($r in $j.Results) { [void]$script:readings.Add($r) } }
+    $results = @()
+    if ($j.Results) { $results = @($j.Results) }
+    $script:lastScanReadings = @($results)
+    if ($script:mpsImport -and $script:mpsImport.Rows) {
+        $importRows = Get-QmMpsRowsForCustomer -Rows $script:mpsImport.Rows -Customer $script:mpsSelectedCustomer
+        $results = @(Merge-QmImportedReadings -ScanReadings $results -ImportRows $importRows)
+    }
+    foreach ($r in $results) { [void]$script:readings.Add($r) }
     $script:scanWasCancelled = [bool]$j.IsCancelled
+    $script:listSource = 'scan'
     Show-ManualResults
 }
 $excludeTo.Add_CheckedChanged({
@@ -650,6 +805,7 @@ $scan.Add_Click({
     if ($hosts.Count -gt 256 -and -not (Ask "This expands to $($hosts.Count) addresses. Scan anyway?")) { return }
     $grid.Rows.Clear(); $script:readings.Clear(); $responded.Text = ''
     $script:scanWasCancelled = $false
+    $script:listSource = 'scan'
     $client = New-QuSnmpClient -Community $community.Text.Trim() -Port ([int]$port.Value) -TimeoutMs ([int]$timeout.Value) -Retries ([int]$retries.Value) -Version $ver.SelectedItem.ToString()
     $scanBar.Maximum = [math]::Max(1, $hosts.Count); $scanBar.Value = 0
     Set-ProgressBarState $scanBar 'normal'
@@ -1286,4 +1442,5 @@ $f.Add_FormClosing({
     foreach ($tm in @($script:scanTimer, $script:runTimer, $script:updateTimer, $script:updatePoll)) { if ($tm) { try { $tm.Stop() } catch { } } }
     Stop-QmBackgroundUpdateCheck
 })
+try { Restore-MpsImport } catch { }
 [void]$f.ShowDialog()

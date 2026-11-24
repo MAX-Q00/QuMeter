@@ -95,6 +95,16 @@ namespace QuMeterSnmp
         public string SerialSource = "";
         public string ModelSource = "";
         public string TotalSource = "";
+        public string Customer = "";
+        public string CustomerCode = "";
+        public string Brand = "";
+        public string AssetNumber = "";
+        public string SystemName = "";
+        public string Office = "";
+        public string Department = "";
+        public string Contact = "";
+        public string LastUpdate = "";
+        public string DaysStale = "";
         public DateTime ReadAt;
 
         public bool Ok

@@ -338,7 +338,7 @@ function Get-QuMeterRespondedIpText {
     $seen = @{}
     foreach ($r in @($Readings)) {
         if ($null -eq $r) { continue }
-        if ("$($r.Status)" -eq 'Timeout' -or "$($r.Status)" -eq 'Cancelled') { continue }
+        if (@('OK', 'Error', 'No data') -notcontains "$($r.Status)") { continue }
         if ($ExcludeNoSerial -and -not (Test-QuMeterHasSerial $r)) { continue }
         $ip = [string]$r.Ip
         if ([string]::IsNullOrWhiteSpace($ip)) { continue }
@@ -565,7 +565,251 @@ function Write-QuXlsx {
     } finally { $zip.Dispose() }
 }
 
+function Get-QuZipEntry {
+    param($Zip, [string]$Name)
+    $want = $Name.Replace('\', '/').TrimStart('/')
+    foreach ($e in $Zip.Entries) {
+        $n = $e.FullName.Replace('\', '/').TrimStart('/')
+        if ([string]::Equals($n, $want, [StringComparison]::OrdinalIgnoreCase)) { return $e }
+    }
+    return $null
+}
+
+function Read-QuZipEntryText {
+    param($Entry)
+    if ($null -eq $Entry) { return $null }
+    $stream = $Entry.Open()
+    try {
+        $sr = New-Object System.IO.StreamReader($stream, [System.Text.UTF8Encoding]::new($false), $true)
+        try { return $sr.ReadToEnd() } finally { $sr.Dispose() }
+    } finally { $stream.Dispose() }
+}
+
+function ConvertFrom-QuXlsxCellRef {
+    param([string]$Ref)
+    if ([string]::IsNullOrWhiteSpace($Ref)) { return $null }
+    if ($Ref -notmatch '^([A-Za-z]+)(\d+)$') { return $null }
+    $col = 0
+    foreach ($ch in $Matches[1].ToUpperInvariant().ToCharArray()) {
+        $col = ($col * 26) + ([int]$ch - [int][char]'A' + 1)
+    }
+    return @{ Col = ($col - 1); Row = [int]$Matches[2] }
+}
+
+function Get-QuXmlLocalNodes {
+    param($Parent, [string]$LocalName)
+    if ($null -eq $Parent) { return @() }
+    return @($Parent.SelectNodes(".//*[local-name()='$LocalName']"))
+}
+
+function Get-QuXlsxSharedStrings {
+    param([xml]$Doc)
+    $list = New-Object System.Collections.Generic.List[string]
+    if ($null -eq $Doc) { return ,$list }
+    foreach ($si in (Get-QuXmlLocalNodes $Doc.DocumentElement 'si')) {
+        $parts = New-Object System.Collections.Generic.List[string]
+        foreach ($t in (Get-QuXmlLocalNodes $si 't')) {
+            $parts.Add([string]$t.InnerText)
+        }
+        $list.Add(($parts -join ''))
+    }
+    return ,$list
+}
+
+function ConvertFrom-QuXlsxCellValue {
+    param($Cell, $Shared)
+    if ($null -eq $Cell) { return '' }
+    $type = ''
+    if ($Cell.HasAttribute('t')) { $type = [string]$Cell.GetAttribute('t') }
+    if ($type -eq 'inlineStr' -or $type -eq 'str') {
+        $parts = New-Object System.Collections.Generic.List[string]
+        foreach ($t in (Get-QuXmlLocalNodes $Cell 't')) { $parts.Add([string]$t.InnerText) }
+        return ($parts -join '')
+    }
+    $vNode = $null
+    foreach ($n in $Cell.ChildNodes) {
+        if ($n.LocalName -eq 'v') { $vNode = $n; break }
+    }
+    $v = ''
+    if ($vNode) { $v = [string]$vNode.InnerText }
+    if ($type -eq 's') {
+        $idx = 0
+        if ([int]::TryParse($v, [ref]$idx) -and $Shared -and $idx -ge 0 -and $idx -lt $Shared.Count) {
+            return [string]$Shared[$idx]
+        }
+        return ''
+    }
+    if ($type -eq 'b') {
+        if ($v -eq '1' -or $v -eq 'true') { return 'TRUE' }
+        if ($v -eq '0' -or $v -eq 'false') { return 'FALSE' }
+        return $v
+    }
+    return $v
+}
+
+function Read-QuXlsxSheetRows {
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [string]$SheetName = ''
+    )
+    if (-not (Test-Path -LiteralPath $Path)) { throw "File not found: $Path" }
+    Add-Type -AssemblyName System.IO.Compression
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $zip = [System.IO.Compression.ZipFile]::OpenRead($Path)
+    try {
+        $shared = @()
+        $ssEntry = Get-QuZipEntry $zip 'xl/sharedStrings.xml'
+        if ($ssEntry) {
+            $ssXml = New-Object System.Xml.XmlDocument
+            $ssXml.XmlResolver = $null
+            $ssXml.LoadXml((Read-QuZipEntryText $ssEntry))
+            $shared = Get-QuXlsxSharedStrings $ssXml
+        }
+
+        $wbEntry = Get-QuZipEntry $zip 'xl/workbook.xml'
+        if (-not $wbEntry) { throw 'Not a valid .xlsx workbook (missing xl/workbook.xml).' }
+        $wb = New-Object System.Xml.XmlDocument
+        $wb.XmlResolver = $null
+        $wb.LoadXml((Read-QuZipEntryText $wbEntry))
+
+        $rels = @{}
+        $relEntry = Get-QuZipEntry $zip 'xl/_rels/workbook.xml.rels'
+        if ($relEntry) {
+            $relDoc = New-Object System.Xml.XmlDocument
+            $relDoc.XmlResolver = $null
+            $relDoc.LoadXml((Read-QuZipEntryText $relEntry))
+            foreach ($rel in (Get-QuXmlLocalNodes $relDoc.DocumentElement 'Relationship')) {
+                $id = [string]$rel.GetAttribute('Id')
+                $target = [string]$rel.GetAttribute('Target')
+                if ($id -and $target) {
+                    $t = $target.Replace('\', '/')
+                    if ($t.StartsWith('/')) { $t = $t.TrimStart('/') }
+                    elseif (-not $t.StartsWith('xl/')) { $t = 'xl/' + $t.TrimStart('/') }
+                    $rels[$id] = $t
+                }
+            }
+        }
+
+        $sheets = New-Object System.Collections.Generic.List[object]
+        foreach ($sh in (Get-QuXmlLocalNodes $wb.DocumentElement 'sheet')) {
+            $name = [string]$sh.GetAttribute('name')
+            $rid = [string]$sh.GetAttribute('r:id')
+            if (-not $rid) { $rid = [string]$sh.GetAttribute('id') }
+            $target = $null
+            if ($rid -and $rels.ContainsKey($rid)) { $target = $rels[$rid] }
+            $sheets.Add([pscustomobject]@{ Name = $name; Target = $target })
+        }
+        if ($sheets.Count -eq 0) { throw 'The workbook has no sheets.' }
+
+        $chosen = $null
+        if ($SheetName) {
+            $chosen = @($sheets | Where-Object { [string]::Equals([string]$_.Name, $SheetName, [StringComparison]::OrdinalIgnoreCase) })[0]
+            if (-not $chosen) { throw "Sheet not found: $SheetName" }
+        } else {
+            $chosen = $sheets[0]
+        }
+        $target = [string]$chosen.Target
+        if ([string]::IsNullOrWhiteSpace($target)) { $target = 'xl/worksheets/sheet1.xml' }
+        $sheetEntry = Get-QuZipEntry $zip $target
+        if (-not $sheetEntry) { throw "Worksheet part not found: $target" }
+
+        $sheetDoc = New-Object System.Xml.XmlDocument
+        $sheetDoc.XmlResolver = $null
+        $sheetDoc.LoadXml((Read-QuZipEntryText $sheetEntry))
+
+        $rowMap = @{}
+        $maxCol = -1
+        $maxRow = 0
+        foreach ($c in (Get-QuXmlLocalNodes $sheetDoc.DocumentElement 'c')) {
+            # Only treat cells that are direct-enough sheet cells (have an r attribute).
+            if (-not $c.HasAttribute('r')) { continue }
+            $pos = ConvertFrom-QuXlsxCellRef ([string]$c.GetAttribute('r'))
+            if ($null -eq $pos) { continue }
+            # Skip cells nested under something other than a row? row/c is standard; r is unique.
+            $val = ConvertFrom-QuXlsxCellValue $c $shared
+            $ri = [int]$pos.Row
+            $ci = [int]$pos.Col
+            if (-not $rowMap.ContainsKey($ri)) { $rowMap[$ri] = @{} }
+            $rowMap[$ri][$ci] = $val
+            if ($ci -gt $maxCol) { $maxCol = $ci }
+            if ($ri -gt $maxRow) { $maxRow = $ri }
+        }
+
+        $rows = New-Object System.Collections.Generic.List[object]
+        if ($maxCol -ge 0 -and $maxRow -gt 0) {
+            for ($r = 1; $r -le $maxRow; $r++) {
+                $line = New-Object string[] ($maxCol + 1)
+                if ($rowMap.ContainsKey($r)) {
+                    foreach ($k in $rowMap[$r].Keys) { $line[[int]$k] = [string]$rowMap[$r][$k] }
+                }
+                $rows.Add($line)
+            }
+        }
+        return [pscustomobject]@{
+            SheetName = [string]$chosen.Name
+            Rows      = $rows.ToArray()
+        }
+    } finally { $zip.Dispose() }
+}
+
+function ConvertFrom-QmCsvText {
+    param([Parameter(Mandatory)][string]$Text, [string]$Delimiter = '')
+    $s = $Text
+    if ($s.Length -gt 0 -and [int][char]$s[0] -eq 0xFEFF) { $s = $s.Substring(1) }
+    $delim = $Delimiter
+    if (-not $delim) {
+        $first = (($s -split '\r\n|\n|\r') | Where-Object { $_.Trim().Length -gt 0 } | Select-Object -First 1)
+        if ($null -eq $first) { $first = '' }
+        $commas = ([regex]::Matches($first, ',')).Count
+        $semis = ([regex]::Matches($first, ';')).Count
+        $tabs = ([regex]::Matches($first, "`t")).Count
+        if ($tabs -gt $commas -and $tabs -gt $semis) { $delim = "`t" }
+        elseif ($semis -gt $commas) { $delim = ';' }
+        else { $delim = ',' }
+    }
+    $rows = New-Object System.Collections.Generic.List[object]
+    $field = New-Object System.Text.StringBuilder
+    $row = New-Object System.Collections.Generic.List[string]
+    $inQuotes = $false
+    $i = 0
+    $len = $s.Length
+    while ($i -lt $len) {
+        $ch = $s[$i]
+        if ($inQuotes) {
+            if ($ch -eq [char]'"') {
+                if (($i + 1) -lt $len -and $s[$i + 1] -eq [char]'"') { [void]$field.Append('"'); $i += 2; continue }
+                $inQuotes = $false; $i++; continue
+            }
+            [void]$field.Append($ch); $i++; continue
+        }
+        if ($ch -eq [char]'"' -and $field.Length -eq 0) { $inQuotes = $true; $i++; continue }
+        if ($ch -eq [char]$delim) { $row.Add($field.ToString()); [void]$field.Clear(); $i++; continue }
+        if ($ch -eq [char]"`r") {
+            $row.Add($field.ToString()); [void]$field.Clear()
+            $rows.Add($row.ToArray()); $row = New-Object System.Collections.Generic.List[string]
+            $i++
+            if ($i -lt $len -and $s[$i] -eq [char]"`n") { $i++ }
+            continue
+        }
+        if ($ch -eq [char]"`n") {
+            $row.Add($field.ToString()); [void]$field.Clear()
+            $rows.Add($row.ToArray()); $row = New-Object System.Collections.Generic.List[string]
+            $i++; continue
+        }
+        [void]$field.Append($ch); $i++
+    }
+    if ($inQuotes -or $field.Length -gt 0 -or $row.Count -gt 0) {
+        $row.Add($field.ToString())
+        $rows.Add($row.ToArray())
+    }
+    return [pscustomobject]@{
+        Delimiter = $delim
+        Rows      = $rows.ToArray()
+    }
+}
+
 function Add-QuXlsxRow {
+
     param($List, [object[]]$Cells)
     [void]$List.Add([object[]]$Cells)
 }
