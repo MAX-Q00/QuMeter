@@ -304,7 +304,7 @@ $bottom = New-Object Windows.Forms.FlowLayoutPanel -Property @{
 $leftTable.Controls.Add($bottom, 0, 2)
 
 $settingsFlow = New-Object Windows.Forms.FlowLayoutPanel -Property @{
-    Dock = 'Fill'; AutoSize = $true; AutoSizeMode = 'GrowAndShrink'
+    Dock = 'Top'; AutoSize = $true; AutoSizeMode = 'GrowAndShrink'
     WrapContents = $true; FlowDirection = 'LeftToRight'; Padding = '6,4,6,4'
 }
 function New-FlowField($labelText, $ctl, [int]$ctlWidth) {
@@ -355,7 +355,7 @@ Set-Acc $concurrency 'Parallel queries'
 [void]$settingsFlow.Controls.Add((New-FlowField '&Retries' $retries 50))
 [void]$settingsFlow.Controls.Add((New-FlowField 'P&arallel queries' $concurrency 60))
 
-$M = New-Object Windows.Forms.Panel -Property @{ Dock = 'Fill'; Height = 300 }
+$M = New-Object Windows.Forms.Panel -Property @{ Dock = 'Top'; Height = 300 }
 $settingsHost.Controls.Add($M, 0, 0)
 $settingsHost.Controls.Add($settingsFlow, 0, 1)
 $scanCol = Add-C $M (New-Object Windows.Forms.Panel -Property @{ Dock = 'Right'; Width = 150 })
