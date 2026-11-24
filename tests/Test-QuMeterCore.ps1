@@ -220,88 +220,92 @@ try {
 } finally { try { if ($sim -and -not $sim.HasExited) { Stop-Process -Id $sim.Id -Force } } catch {} }
 
 Write-Host '=== MPS list import ==='
-$fx = Join-Path $here 'fixtures/mps-import-sample.csv'
-$imp = Import-QmMpsList -Path $fx
-Assert-Eq $imp.TotalRows 6 'sample fixture imports six data rows'
+# All import cases are built in memory with neutral placeholders. No committed sample files.
+$csvMain = @(
+    'Customer code,Customer Description,Brand,Model,SerialNumber,AssetNumber,Ip Address,Contact,Sytem name,Office,Department,Last update,Days stale',
+    'CODE-A,Customer A,Brand A,Model 1,SERIAL-A1,ASSET-1,192.0.2.10,,host-a,Office 1,,2026-01-15,10',
+    'CODE-A,Customer A,Brand A,Model 2,SERIAL-A2,,192.0.2.11,,host-a2,Office 1,,2026-01-16,9',
+    'CODE-B,Customer B,Brand B,Model 3,SERIAL-B1,ASSET-2,192.0.2.20,,,Office 1,Dept 1,2026-02-01,5',
+    'CODE-B,Customer B,Brand B,Model 3,SERIAL-B2,,,,Office 1,,2026-02-01,5',
+    'CODE-C,Customer C,Brand C,Model 4,SERIAL-C1,,192.0.2.30,,host-c,Office 1,Dept 2,15/03/2026,2',
+    'CODE-C,Customer C,Brand C,Model 4,SERIAL-C2,,999.1.1.1,,host-bad,Office 1,,2026-03-01,1'
+) -join "`n"
+$imp = Import-QmMpsListFromCsvText -Text $csvMain
+Assert-Eq $imp.TotalRows 6 'in-memory list imports six data rows'
 Assert-Eq $imp.WithIpCount 4 'four rows have a usable IPv4 address'
 Assert-Eq $imp.NoIpCount 2 'blank and invalid IPs are kept as no-IP rows'
-Assert-Eq (@($imp.Customers) -join '|') 'Cedar Park Office|Harbor Goods|Maple Dental' 'customer names are unique and sorted'
-Assert-Eq $imp.Rows[0].SystemName 'cedar-laser-01' 'Sytem name typo header maps to SystemName'
-Assert-Eq $imp.Rows[0].Customer 'Cedar Park Office' 'Customer Description maps to Customer'
-Assert-Eq $imp.Rows[0].CustomerCode 'CSTM001' 'Customer code is stored'
-Assert-Eq $imp.Rows[0].Brand 'Contoso' 'Brand is stored'
-Assert-Eq $imp.Rows[0].Serial 'SN-AAA111' 'SerialNumber maps to Serial'
-Assert-Eq $imp.Rows[0].AssetNumber 'AST-100' 'AssetNumber is stored'
-Assert-Eq $imp.Rows[0].Ip '203.0.113.10' 'Ip Address maps to Ip'
+Assert-Eq (@($imp.Customers) -join '|') 'Customer A|Customer B|Customer C' 'customer names are unique and sorted'
+Assert-Eq $imp.Rows[0].SystemName 'host-a' 'Sytem name typo header maps to SystemName'
+Assert-Eq $imp.Rows[0].Customer 'Customer A' 'Customer Description maps to Customer'
+Assert-Eq $imp.Rows[0].CustomerCode 'CODE-A' 'Customer code is stored'
+Assert-Eq $imp.Rows[0].Brand 'Brand A' 'Brand is stored'
+Assert-Eq $imp.Rows[0].Serial 'SERIAL-A1' 'SerialNumber maps to Serial'
+Assert-Eq $imp.Rows[0].AssetNumber 'ASSET-1' 'AssetNumber is stored'
+Assert-Eq $imp.Rows[0].Ip '192.0.2.10' 'Ip Address maps to Ip'
 Assert-Eq $imp.Rows[3].HasIp $false 'row with a blank IP is kept and flagged'
-Assert-Eq $imp.Rows[3].Serial 'SN-DDD444' 'no-IP row still keeps serial'
+Assert-Eq $imp.Rows[3].Serial 'SERIAL-B2' 'no-IP row still keeps serial'
 Assert-Eq $imp.Rows[5].HasIp $false 'invalid IPv4 is treated as no IP'
 Assert-Eq $imp.Rows[5].IpRaw '999.1.1.1' 'invalid IP raw value is preserved'
 
-$cedar = Get-QmMpsRowsForCustomer -Rows $imp.Rows -Customer 'Cedar Park Office'
-Assert-Eq $cedar.Count 2 'customer filter returns that customer only'
-Assert-Eq ((Get-QmMpsIpList $cedar) -join ',') '203.0.113.10,203.0.113.11' 'customer IP list is unique and in file order'
+$groupA = Get-QmMpsRowsForCustomer -Rows $imp.Rows -Customer 'Customer A'
+Assert-Eq $groupA.Count 2 'customer filter returns that customer only'
+Assert-Eq ((Get-QmMpsIpList $groupA) -join ',') '192.0.2.10,192.0.2.11' 'customer IP list is unique and in file order'
 $allIps = Get-QmMpsIpList (Get-QmMpsRowsForCustomer -Rows $imp.Rows -Customer 'All customers')
-Assert-Eq ($allIps -join ',') '203.0.113.10,203.0.113.11,203.0.113.20,203.0.113.30' 'All customers lists every usable IP once'
+Assert-Eq ($allIps -join ',') '192.0.2.10,192.0.2.11,192.0.2.20,192.0.2.30' 'All customers lists every usable IP once'
 
-$alt = @(
-    'Report title: made-up fleet',
+$csvAlt = @(
+    'Report title: placeholder list',
     '',
     'IP,Customer,Serial Number,Manufacturer,Model',
-    '203.0.113.40,Blue Mesa Shop,SN-ZZZ001,Contoso,Contoso Laser 100',
+    '192.0.2.40,Customer D,SERIAL-D1,Brand A,Model 5',
     '',
-    '203.0.113.40,Blue Mesa Shop,SN-ZZZ002,Contoso,Contoso Laser 101',
-    'not-an-ip,Blue Mesa Shop,SN-ZZZ003,Contoso,Contoso Laser 102',
+    '192.0.2.40,Customer D,SERIAL-D2,Brand A,Model 6',
+    'not-an-ip,Customer D,SERIAL-D3,Brand A,Model 7',
     '   ,,,,'
-)
-$altPath = Join-Path $tmp 'mps-alt-headers.csv'
-$alt -join "`r`n" | Set-Content -LiteralPath $altPath -Encoding UTF8
-$impAlt = Import-QmMpsList -Path $altPath
+) -join "`r`n"
+$impAlt = Import-QmMpsListFromCsvText -Text $csvAlt
 Assert-Eq $impAlt.HeaderIndex 2 'title and blank rows above the header are skipped'
 Assert-Eq $impAlt.TotalRows 3 'blank trailing row is skipped; invalid IP is kept'
 Assert-Eq $impAlt.WithIpCount 2 'alternate IP header is recognized'
-Assert-Eq $impAlt.Rows[0].Brand 'Contoso' 'Manufacturer maps to Brand'
-Assert-Eq $impAlt.Rows[0].Customer 'Blue Mesa Shop' 'Customer header maps'
+Assert-Eq $impAlt.Rows[0].Brand 'Brand A' 'Manufacturer maps to Brand'
+Assert-Eq $impAlt.Rows[0].Customer 'Customer D' 'Customer header maps'
 Assert-Eq $impAlt.Rows[2].HasIp $false 'non-IPv4 host value is treated as no IP'
 $dupIps = Get-QmMpsIpList $impAlt.Rows
-Assert-Eq ($dupIps -join ',') '203.0.113.40' 'duplicate IPs appear once in the scan list'
+Assert-Eq ($dupIps -join ',') '192.0.2.40' 'duplicate IPs appear once in the scan list'
 
-$scsv = @(
+$csvSemi = @(
     'Customer Description;Ip Address;Model;SerialNumber',
-    'Willow Library;203.0.113.50;Northwind Ink 8;SN-WIL001',
-    'Willow Library;203.0.113.51;Northwind Ink 8;SN-WIL002'
+    'Customer E;192.0.2.50;Model 8;SERIAL-E1',
+    'Customer E;192.0.2.51;Model 8;SERIAL-E2'
 ) -join "`n"
-$scsvPath = Join-Path $tmp 'mps-semicolon.csv'
-Set-Content -LiteralPath $scsvPath -Value $scsv -Encoding UTF8
-$impSemi = Import-QmMpsList -Path $scsvPath
+$impSemi = Import-QmMpsListFromCsvText -Text $csvSemi
 Assert-Eq $impSemi.WithIpCount 2 'semicolon CSV is detected and parsed'
 
 $xlsxHeaders = @('Customer Description','Brand','Model','SerialNumber','Ip Address','Sytem name')
 $xlsxRows = New-Object System.Collections.Generic.List[object]
 Add-QuXlsxRow $xlsxRows $xlsxHeaders
-Add-QuXlsxRow $xlsxRows @('Pine Ridge School','Contoso','Contoso MFP 50','SN-PRS001','203.0.113.60','pine-mfp')
-Add-QuXlsxRow $xlsxRows @('Pine Ridge School','Contoso','Contoso MFP 50','SN-PRS002','','')
+Add-QuXlsxRow $xlsxRows @('Customer F','Brand A','Model 9','SERIAL-F1','192.0.2.60','host-f')
+Add-QuXlsxRow $xlsxRows @('Customer F','Brand A','Model 9','SERIAL-F2','','')
 Add-QuXlsxRow $xlsxRows @('','','','','','')
-Add-QuXlsxRow $xlsxRows @('Oak Harbor Clinic','Fabrikam','Fabrikam Color 10','SN-OHC001','203.0.113.70','oak-color')
+Add-QuXlsxRow $xlsxRows @('Customer G','Brand B','Model 10','SERIAL-G1','192.0.2.70','host-g')
 $xlsxPath = Join-Path $tmp 'mps-import.xlsx'
 Write-QuXlsx -Path $xlsxPath -Sheets @(@{ Name = 'Fleet'; Rows = $xlsxRows.ToArray() })
 $impX = Import-QmMpsList -Path $xlsxPath
 Assert-Eq $impX.SheetName 'Fleet' 'xlsx reader uses the first sheet name'
 Assert-Eq $impX.TotalRows 3 'xlsx blank row is skipped'
 Assert-Eq $impX.WithIpCount 2 'xlsx IPs are read from inline strings'
-Assert-Eq $impX.Rows[0].SystemName 'pine-mfp' 'xlsx typo header Sytem name is mapped'
-Assert-Eq (@($impX.Customers) -join '|') 'Oak Harbor Clinic|Pine Ridge School' 'xlsx customers are collected'
+Assert-Eq $impX.Rows[0].SystemName 'host-f' 'xlsx typo header Sytem name is mapped'
+Assert-Eq (@($impX.Customers) -join '|') 'Customer F|Customer G' 'xlsx customers are collected'
 
 $store = Join-Path $tmp 'mps-import.json'
-Save-QmMpsImport -Import $impX -Path $store -SelectedCustomer 'Pine Ridge School'
+Save-QmMpsImport -Import $impX -Path $store -SelectedCustomer 'Customer F'
 $round = Read-QmMpsImport -Path $store
 Assert-Eq $round.TotalRows 3 'saved import round-trips row count'
-Assert-Eq $round.SelectedCustomer 'Pine Ridge School' 'selected customer is persisted'
-Assert-Eq $round.Rows[0].Ip '203.0.113.60' 'saved IPs round-trip'
+Assert-Eq $round.SelectedCustomer 'Customer F' 'selected customer is persisted'
+Assert-Eq $round.Rows[0].Ip '192.0.2.60' 'saved IPs round-trip'
 Assert-Eq $round.Rows[1].HasIp $false 'saved no-IP flag round-trips'
-Assert-Eq $round.Rows[0].Customer 'Pine Ridge School' 'saved customer name round-trips'
+Assert-Eq $round.Rows[0].Customer 'Customer F' 'saved customer name round-trips'
 
-# Shared-strings xlsx (typical Excel layout), built without customer data from any external report.
 Add-Type -AssemblyName System.IO.Compression
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $ssPath = Join-Path $tmp 'mps-shared.xlsx'
@@ -319,12 +323,12 @@ $shared = @'
   <si><t>Ip Address</t></si>
   <si><t>Model</t></si>
   <si><t>SerialNumber</t></si>
-  <si><t>Riverstone Bakery</t></si>
-  <si><t>203.0.113.80</t></si>
-  <si><t>Contoso Laser 80</t></si>
-  <si><t>SN-RSB001</t></si>
-  <si><t>Riverstone Bakery</t></si>
-  <si><t>SN-RSB002</t></si>
+  <si><t>Customer H</t></si>
+  <si><t>192.0.2.80</t></si>
+  <si><t>Model 11</t></si>
+  <si><t>SERIAL-H1</t></si>
+  <si><t>Customer H</t></si>
+  <si><t>SERIAL-H2</t></si>
 </sst>
 '@
 $sheet = @'
@@ -351,36 +355,34 @@ $ssZip.Dispose()
 $impSs = Import-QmMpsList -Path $ssPath
 Assert-Eq $impSs.TotalRows 2 'shared-string xlsx imports both rows'
 Assert-Eq $impSs.WithIpCount 1 'shared-string row with a skipped IP cell is no-IP'
-Assert-Eq $impSs.Rows[0].Customer 'Riverstone Bakery' 'shared strings resolve customer text'
-Assert-Eq $impSs.Rows[0].Ip '203.0.113.80' 'shared strings resolve IP text'
+Assert-Eq $impSs.Rows[0].Customer 'Customer H' 'shared strings resolve customer text'
+Assert-Eq $impSs.Rows[0].Ip '192.0.2.80' 'shared strings resolve IP text'
 Assert-Eq $impSs.Rows[1].HasIp $false 'omitted IP cell is treated as no IP'
 
 $scan = New-Object QuMeterSnmp.PrinterReading
-$scan.Ip = '203.0.113.60'; $scan.Model = 'Live Model'; $scan.Serial = 'LIVE-SN'; $scan.Total = '12345'; $scan.Status = 'OK'
+$scan.Ip = '192.0.2.60'; $scan.Model = 'Live Model'; $scan.Serial = 'LIVE-SN'; $scan.Total = '12345'; $scan.Status = 'OK'
 $merged = Merge-QmImportedReadings -ScanReadings @($scan) -ImportRows $impX.Rows
 Assert-Eq $merged.Count 3 'merge keeps no-IP import rows and the other customer'
-Assert-Eq $merged[0].Customer 'Pine Ridge School' 'merge copies customer onto the scan result'
+Assert-Eq $merged[0].Customer 'Customer F' 'merge copies customer onto the scan result'
 Assert-Eq $merged[0].Model 'Live Model' 'scan model wins when present'
 Assert-Eq $merged[0].Total '12345' 'scan meters are kept'
-Assert-Eq $merged[0].SystemName 'pine-mfp' 'imported system name is copied'
+Assert-Eq $merged[0].SystemName 'host-f' 'imported system name is copied'
 $noScan = @($merged | Where-Object { $_.Status -eq 'Imported' -or $_.Status -eq 'No IP' })
 Assert-Eq $noScan.Count 2 'unscanned import rows stay in the merged list'
 
 $reading = ConvertTo-QmImportedReading $imp.Rows[0]
 Assert-Eq $reading.Status 'Imported' 'imported row with an IP is marked Imported'
-Assert-Eq $reading.Customer 'Cedar Park Office' 'imported reading carries customer'
+Assert-Eq $reading.Customer 'Customer A' 'imported reading carries customer'
 $readingNo = ConvertTo-QmImportedReading $imp.Rows[3]
 Assert-Eq $readingNo.Status 'No IP' 'imported row without an IP is marked No IP'
 Assert-True (-not (Test-QmRespondedStatus 'Imported')) 'Imported does not count as a scan response'
 Assert-True (-not (Test-QmRespondedStatus 'No IP')) 'No IP does not count as a scan response'
 Assert-True (Test-QmRespondedStatus 'OK') 'OK still counts as a scan response'
 $ipText = Get-QuMeterRespondedIpText -Readings @($reading, $readingNo, $scan)
-Assert-Eq $ipText '203.0.113.60' 'Responding IPs ignores Imported and No IP rows'
+Assert-Eq $ipText '192.0.2.60' 'Responding IPs ignores Imported and No IP rows'
 
-$missing = Join-Path $tmp 'no-ip-col.csv'
-"Customer,Model,SerialNumber`nBlue Mesa Shop,Contoso Laser 100,SN-ZZZ001" | Set-Content $missing
 $threw = $false
-try { Import-QmMpsList -Path $missing | Out-Null } catch { $threw = $true; Assert-True ($_.Exception.Message -match 'no IP address column') 'missing IP column explains the error' }
+try { Import-QmMpsListFromCsvText -Text "Customer,Model,SerialNumber`nCustomer D,Model 5,SERIAL-D1" | Out-Null } catch { $threw = $true; Assert-True ($_.Exception.Message -match 'no IP address column') 'missing IP column explains the error' }
 Assert-True $threw 'missing IP column fails the import'
 
 $xls = Join-Path $tmp 'old.xls'
@@ -389,18 +391,14 @@ $threwXls = $false
 try { Import-QmMpsList -Path $xls | Out-Null } catch { $threwXls = $true; Assert-True ($_.Exception.Message -match '\.xls') '.xls files are rejected with a save-as hint' }
 Assert-True $threwXls '.xls import throws'
 
-$emptyCust = @(
+$csvUn = @(
     'Customer code,Customer Description,Model,SerialNumber,Ip Address',
-    'CSTM900,,Contoso Laser 9,SN-UNC001,203.0.113.90'
+    'CODE-Z,,Model 12,SERIAL-Z1,192.0.2.90'
 ) -join "`n"
-$emptyPath = Join-Path $tmp 'mps-unnamed.csv'
-Set-Content -LiteralPath $emptyPath -Value $emptyCust -Encoding UTF8
-$impUn = Import-QmMpsList -Path $emptyPath
-Assert-Eq $impUn.Rows[0].Customer 'CSTM900' 'blank customer description falls back to customer code'
+$impUn = Import-QmMpsListFromCsvText -Text $csvUn
+Assert-Eq $impUn.Rows[0].Customer 'CODE-Z' 'blank customer description falls back to customer code'
 
-$nonePath = Join-Path $tmp 'mps-none.csv'
-"Customer Description,Ip Address`n, " | Set-Content $nonePath
-$impNone = Import-QmMpsList -Path $nonePath
+$impNone = Import-QmMpsListFromCsvText -Text "Customer Description,Ip Address`n, "
 Assert-Eq $impNone.TotalRows 0 'rows with no useful fields are skipped'
 
 Write-Host ''

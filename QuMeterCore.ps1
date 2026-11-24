@@ -745,29 +745,17 @@ function Merge-QmImportedReadings {
     return ,$merged.ToArray()
 }
 
-function Import-QmMpsList {
-    param([Parameter(Mandatory)][string]$Path, [string]$SheetName = '')
-    if (-not (Test-Path -LiteralPath $Path)) { throw "File not found: $Path" }
-    $ext = [System.IO.Path]::GetExtension($Path)
-    if ($ext -and $ext.Equals('.xls', [StringComparison]::OrdinalIgnoreCase)) {
-        throw 'Excel 97-2003 .xls files are not supported. Save the list as .xlsx or .csv and import that.'
-    }
-    $tableRows = @()
-    $sheet = ''
-    if ($ext -and $ext.Equals('.xlsx', [StringComparison]::OrdinalIgnoreCase)) {
-        $sheetData = Read-QuXlsxSheetRows -Path $Path -SheetName $SheetName
-        $tableRows = @($sheetData.Rows)
-        $sheet = [string]$sheetData.SheetName
-    } else {
-        $text = [System.IO.File]::ReadAllText($Path)
-        $csv = ConvertFrom-QmCsvText -Text $text
-        $tableRows = @($csv.Rows)
-    }
-    $parsed = ConvertTo-QmMpsImportRows -TableRows $tableRows
+function New-QmMpsImportResult {
+    param(
+        [object[]]$TableRows,
+        [string]$SourceName = '',
+        [string]$SheetName = ''
+    )
+    $parsed = ConvertTo-QmMpsImportRows -TableRows $TableRows
     $customers = @(Get-QmMpsCustomerNames $parsed.Rows)
     return [pscustomobject]@{
-        SourceName   = [System.IO.Path]::GetFileName($Path)
-        SheetName    = $sheet
+        SourceName   = $SourceName
+        SheetName    = $SheetName
         Rows         = @($parsed.Rows)
         Customers    = $customers
         HeaderIndex  = $parsed.HeaderIndex
@@ -777,6 +765,31 @@ function Import-QmMpsList {
         NoIpCount    = [int]$parsed.NoIpCount
         TotalRows    = @($parsed.Rows).Count
     }
+}
+
+function Import-QmMpsListFromCsvText {
+    param(
+        [Parameter(Mandatory)][string]$Text,
+        [string]$SourceName = 'memory.csv'
+    )
+    $csv = ConvertFrom-QmCsvText -Text $Text
+    return (New-QmMpsImportResult -TableRows $csv.Rows -SourceName $SourceName)
+}
+
+function Import-QmMpsList {
+    param([Parameter(Mandatory)][string]$Path, [string]$SheetName = '')
+    if (-not (Test-Path -LiteralPath $Path)) { throw "File not found: $Path" }
+    $ext = [System.IO.Path]::GetExtension($Path)
+    if ($ext -and $ext.Equals('.xls', [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'Excel 97-2003 .xls files are not supported. Save the list as .xlsx or .csv and import that.'
+    }
+    $sourceName = [System.IO.Path]::GetFileName($Path)
+    if ($ext -and $ext.Equals('.xlsx', [StringComparison]::OrdinalIgnoreCase)) {
+        $sheetData = Read-QuXlsxSheetRows -Path $Path -SheetName $SheetName
+        return (New-QmMpsImportResult -TableRows $sheetData.Rows -SourceName $sourceName -SheetName ([string]$sheetData.SheetName))
+    }
+    $text = [System.IO.File]::ReadAllText($Path)
+    return (Import-QmMpsListFromCsvText -Text $text -SourceName $sourceName)
 }
 
 function Get-QmMpsImportPath {
