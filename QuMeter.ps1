@@ -344,7 +344,7 @@ $manualTips = @"
 TIPS - USING THE MANUAL OUTPUT
 
 IMPORT LIST (MPS)
-Click Import List (MPS) under Scan to load an MPS fleet report (.xlsx or .csv). QuMeter reads the IP, customer, model, serial, and other columns, fills the results list, and stores that list until you import again. A new scan reads meters for the IPs currently shown and keeps the imported customer details. The Customer drop-down always starts with IP Search/No Customer (the default when no list is imported). After an import it also lists All customers and each customer; picking a customer shows only that customer's rows. If the IP box is empty, Scan queries the imported IPs for the selected customer. Typing an IP or range switches the drop-down to IP Search/No Customer and Scan uses the typed addresses with no customer filter. Rows with no IP stay in the list but are not scanned. The imported list is saved in mps-import.json and comes back after you restart the app.
+Click Import List (MPS) under Scan to load an MPS fleet report (.xlsx or .csv). QuMeter reads the IP, customer, model, serial, and other columns, fills the results list, and stores that list until you import again. A new scan reads meters for the IPs currently shown and keeps the imported customer details. The Customer drop-down always starts with IP Search/No Customer (the default when no list is imported). After an import it also lists All customers and each customer; picking a customer shows only that customer's rows. If the IP box is empty, Scan queries the imported IPs for the selected customer. Clicking or tabbing into the IP box, or typing an IP or range, switches the drop-down to IP Search/No Customer, and Scan then uses the addresses in the box with no customer filter. Rows with no IP stay in the list but are not scanned. The imported list is saved in mps-import.json and comes back after you restart the app.
 
 RECOMMENDED: e-automate workbook  (Export e-automate)
 Best path for updating meters on many serial numbers at once. Only printers that answered AND reported a serial are included.
@@ -528,6 +528,7 @@ $customerFilter.Add_SelectedIndexChanged({
         try { Save-QmMpsImport -Import $script:mpsImport -Path $script:mpsImportPath -SelectedCustomer $sel } catch { }
     }
     if (Test-QmMpsIpSearchMode $sel) {
+        # Leave the IP box as-is so focusing or typing there cannot loop or wipe typed addresses.
         Persist
         return
     }
@@ -551,21 +552,24 @@ $customerFilter.Add_SelectedIndexChanged({
     Show-MpsImportedList
     Persist
 })
-$targets.Add_TextChanged({
+function Switch-ToIpSearchMode([bool]$OnFocus = $false) {
     if ($script:updatingTargets) { return }
     if ($script:scanJob) { return }
-    if (-not (Test-QmMpsShouldSwitchToIpSearch -CurrentCustomer $script:mpsSelectedCustomer -TargetText $targets.Text -HasImport ([bool]$script:mpsImport) -Programmatic $false)) { return }
+    if (-not (Test-QmMpsShouldSwitchToIpSearch -CurrentCustomer $script:mpsSelectedCustomer -TargetText $targets.Text -HasImport ([bool]$script:mpsImport) -Programmatic $false -OnFocus $OnFocus)) { return }
     $script:updatingCustomerFilter = $true
     try {
         $script:mpsSelectedCustomer = Get-QmMpsIpSearchLabel
         $idx = $customerFilter.Items.IndexOf((Get-QmMpsIpSearchLabel))
-        if ($idx -ge 0) { $customerFilter.SelectedIndex = $idx }
+        if ($idx -ge 0 -and $customerFilter.SelectedIndex -ne $idx) { $customerFilter.SelectedIndex = $idx }
     } finally { $script:updatingCustomerFilter = $false }
     if ($script:mpsImport -and (Test-Path -LiteralPath $script:mpsImportPath)) {
         try { Save-QmMpsImport -Import $script:mpsImport -Path $script:mpsImportPath -SelectedCustomer $script:mpsSelectedCustomer } catch { }
     }
     Persist
-})
+}
+$targets.Add_Enter({ Switch-ToIpSearchMode -OnFocus $true })
+$targets.Add_GotFocus({ Switch-ToIpSearchMode -OnFocus $true })
+$targets.Add_TextChanged({ Switch-ToIpSearchMode -OnFocus $false })
 function Persist {
     Save-Settings @{ community = $community.Text; version = $ver.SelectedItem.ToString(); port = [int]$port.Value; timeoutMs = [int]$timeout.Value; retries = [int]$retries.Value; concurrency = [int]$concurrency.Value; targets = (Repair-QmTargetText $targets.Text); excludeTimedOut = [bool]$excludeTo.Checked; excludeNoSerial = [bool]$excludeNoSerial.Checked; remarks = $remarks.Text; hideTips = [bool]$hideTips.Checked; lastExportFolder = [string]$script:lastExportFolder; lastMpsImportFolder = [string]$script:lastMpsImportFolder; mpsSelectedCustomer = [string]$script:mpsSelectedCustomer }
     if ($script:cfg) { $script:cfg.eaRemarks = $remarks.Text; $script:cfg.excludeNoSerial = [bool]$excludeNoSerial.Checked }

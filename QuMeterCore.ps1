@@ -705,10 +705,11 @@ function Get-QmMpsDefaultCustomer {
 }
 
 function Test-QmMpsShouldSwitchToIpSearch {
-    param([string]$CurrentCustomer, [string]$TargetText, [bool]$HasImport, [bool]$Programmatic = $false)
+    param([string]$CurrentCustomer, [string]$TargetText, [bool]$HasImport, [bool]$Programmatic = $false, [bool]$OnFocus = $false)
     if ($Programmatic) { return $false }
     if (-not $HasImport) { return $false }
     if (Test-QmMpsIpSearchMode $CurrentCustomer) { return $false }
+    if ($OnFocus) { return $true }
     $text = Repair-QmTargetText $TargetText
     return -not [string]::IsNullOrWhiteSpace($text)
 }
