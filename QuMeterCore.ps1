@@ -1006,6 +1006,58 @@ function Test-QmRespondedStatus {
     return @('OK', 'Error', 'No data') -contains $Status
 }
 
+# --- UI / copy helpers (testable without WinForms)
+function Get-QmAutomateTabText { return 'Automate (Experimental)' }
+function Get-QmAutomateExperimentalBanner { return 'The Automate Tab is Experimental and requires further testing' }
+function Get-QmAutomateExperimentalArgb { return @(0xB0, 0x00, 0x20) }
+function Get-QmPrimaryButtonArgb { return @(25, 135, 84) }
+function Get-QmImportMpsButtonText { return 'Import list (MPS)...' }
+function Get-QmAboutDescription { return 'Reads lifetime meter counts over SNMP for e-automate and MPS imports.' }
+function Get-QmRunOnceEmptyCaption { return 'Add printers and save settings to run.' }
+function Get-QmTipsAutoCollapseWidth { return 1100 }
+function Get-QmManualGridColumnOrder {
+    return @('IP','Status','Serial','Model','Total','Mono','Color','Customer','Brand','Asset','System','SysDescr','Error')
+}
+function Get-QmContrastRatio {
+    param([int]$R1, [int]$G1, [int]$B1, [int]$R2, [int]$G2, [int]$B2)
+    function Get-Lin([double]$c) {
+        $s = $c / 255.0
+        if ($s -le 0.04045) { return $s / 12.92 }
+        return [math]::Pow((($s + 0.055) / 1.055), 2.4)
+    }
+    function Get-Lum([int]$r, [int]$g, [int]$b) {
+        return (0.2126 * (Get-Lin $r)) + (0.7152 * (Get-Lin $g)) + (0.0722 * (Get-Lin $b))
+    }
+    $l1 = Get-Lum $R1 $G1 $B1
+    $l2 = Get-Lum $R2 $G2 $B2
+    if ($l1 -lt $l2) { $tmp = $l1; $l1 = $l2; $l2 = $tmp }
+    return [math]::Round((($l1 + 0.05) / ($l2 + 0.05)), 2)
+}
+function Test-QmRunOnceCanRun {
+    param($SavedTargets, [bool]$Running = $false)
+    if ($Running) { return $false }
+    return (@($SavedTargets | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) }).Count -gt 0)
+}
+function Test-QmExportButtonsShouldEnable {
+    param([bool]$Scanning, [int]$Total, [int]$Responded, [int]$OkSerial, [string]$Kind = 'general')
+    if ($Scanning) { return $false }
+    if ($Total -le 0 -or $Responded -le 0) { return $false }
+    if ($Kind -eq 'ea' -or $Kind -eq 'mps') { return ($OkSerial -gt 0) }
+    return $true
+}
+function Get-QmDefaultHideTips {
+    param($Saved)
+    if ($Saved -and ($Saved.PSObject.Properties.Name -contains 'hideTips')) { return [bool]$Saved.hideTips }
+    if ($Saved -and ($Saved.PSObject.Properties.Name -contains 'tipsSeen') -and $Saved.tipsSeen) { return $true }
+    return $false
+}
+function Test-QmTipsShouldCollapse {
+    param([int]$Width, [bool]$HidePref, [bool]$PinnedOpen, [int]$Threshold = 1100)
+    if ($PinnedOpen) { return $false }
+    if ($HidePref) { return $true }
+    return ($Width -lt $Threshold)
+}
+
 # Update helpers (GitHub Releases check / install). Safe to load in the headless engine; nothing runs on import.
 $script:QmUpdatePath = Join-Path $script:QmCoreRoot 'QuMeterUpdate.ps1'
 if (Test-Path -LiteralPath $script:QmUpdatePath) { . $script:QmUpdatePath }

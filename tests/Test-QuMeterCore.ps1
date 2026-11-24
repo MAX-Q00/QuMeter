@@ -466,6 +466,47 @@ Assert-True ($readingList.Count -ge 3) 'flattened merge still includes imported 
 Assert-Eq $readingList[0].Customer 'Customer A' 'merged customer field survives the list add'
 Assert-Eq $readingList[0].Total '50' 'scanned meters survive the list add'
 
+
+# --- 2.2.3 layout / copy helpers
+Assert-Eq (Get-QmAutomateTabText) 'Automate (Experimental)' 'Automate tab title includes (Experimental)'
+Assert-Eq (Get-QmAutomateExperimentalBanner) 'The Automate Tab is Experimental and requires further testing' 'experimental banner wording is exact'
+$banner = Get-QmAutomateExperimentalArgb
+Assert-True (($banner[0] -eq 0xB0) -and ($banner[1] -eq 0x00) -and ($banner[2] -eq 0x20)) 'experimental banner color is #B00020'
+$bannerContrast = Get-QmContrastRatio $banner[0] $banner[1] $banner[2] 255 255 255
+Assert-True ($bannerContrast -ge 4.5) "experimental red on white meets 4.5:1 contrast (got $bannerContrast)"
+$primary = Get-QmPrimaryButtonArgb
+$scanContrast = Get-QmContrastRatio 255 255 255 $primary[0] $primary[1] $primary[2]
+Assert-True ($scanContrast -ge 4.5) "Scan / Run once now white on #198754 meets 4.5:1 (got $scanContrast)"
+Assert-Eq (Get-QmImportMpsButtonText) 'Import list (MPS)...' 'Import list (MPS)... uses sentence-case List and an ellipsis'
+Assert-Eq (Get-QmAboutDescription) 'Reads lifetime meter counts over SNMP for e-automate and MPS imports.' 'About description avoids jargon'
+Assert-Eq (Get-QmRunOnceEmptyCaption) 'Add printers and save settings to run.' 'Run once now empty caption'
+Assert-Eq (Get-QmTipsAutoCollapseWidth) '1100' 'tips auto-collapse below about 1100px'
+$cols = Get-QmManualGridColumnOrder
+Assert-Eq ($cols -join ',') 'IP,Status,Serial,Model,Total,Mono,Color,Customer,Brand,Asset,System,SysDescr,Error' 'grid column order leads with IP, Status, Serial, Model, counts'
+Assert-True ($cols[0] -eq 'IP' -and $cols[1] -eq 'Status' -and $cols[-2] -eq 'SysDescr' -and $cols[-1] -eq 'Error') 'SysDescr and Error are last'
+Assert-True (-not (Test-QmRunOnceCanRun -SavedTargets @() -Running:$false)) 'Run once now stays off with no saved printers'
+Assert-True (-not (Test-QmRunOnceCanRun -SavedTargets @('10.0.0.1') -Running:$true)) 'Run once now stays off while a run is in progress'
+Assert-True (Test-QmRunOnceCanRun -SavedTargets @('10.0.0.1') -Running:$false) 'Run once now is on when saved printers exist'
+Assert-True (-not (Test-QmRunOnceCanRun -SavedTargets @('  ') -Running:$false)) 'whitespace-only printer lists do not enable Run once now'
+Assert-True (-not (Test-QmExportButtonsShouldEnable -Scanning $true -Total 10 -Responded 4 -OkSerial 3 -Kind 'general')) 'exports stay off during a scan'
+Assert-True (-not (Test-QmExportButtonsShouldEnable -Scanning $false -Total 10 -Responded 0 -OkSerial 0 -Kind 'general')) 'exports stay off when nothing responded'
+Assert-True (Test-QmExportButtonsShouldEnable -Scanning $false -Total 10 -Responded 4 -OkSerial 3 -Kind 'general') 'general exports turn on after a successful scan'
+Assert-True (Test-QmExportButtonsShouldEnable -Scanning $false -Total 10 -Responded 4 -OkSerial 3 -Kind 'ea') 'e-automate export needs a serial'
+Assert-True (-not (Test-QmExportButtonsShouldEnable -Scanning $false -Total 10 -Responded 4 -OkSerial 0 -Kind 'ea')) 'e-automate export stays off without a serial'
+Assert-True (-not (Test-QmExportButtonsShouldEnable -Scanning $false -Total 10 -Responded 4 -OkSerial 0 -Kind 'mps')) 'MPS export stays off without a serial'
+$fresh = [pscustomobject]@{}
+Assert-True (-not (Get-QmDefaultHideTips $fresh)) 'first run shows tips'
+$afterFirst = [pscustomobject]@{ tipsSeen = $true }
+Assert-True (Get-QmDefaultHideTips $afterFirst) 'after the first run, tips default to hidden'
+$kept = [pscustomobject]@{ tipsSeen = $true; hideTips = $false }
+Assert-True (-not (Get-QmDefaultHideTips $kept)) 'a saved Show-tips choice is remembered'
+$hidden = [pscustomobject]@{ hideTips = $true }
+Assert-True (Get-QmDefaultHideTips $hidden) 'a saved Hide-tips choice is remembered'
+Assert-True (Test-QmTipsShouldCollapse -Width 900 -HidePref $false -PinnedOpen $false) 'tips auto-collapse below 1100px'
+Assert-True (-not (Test-QmTipsShouldCollapse -Width 1200 -HidePref $false -PinnedOpen $false)) 'tips can show on a wide window when the user has not hidden them'
+Assert-True (Test-QmTipsShouldCollapse -Width 1200 -HidePref $true -PinnedOpen $false) 'the hidden preference still applies on a wide window'
+Assert-True (-not (Test-QmTipsShouldCollapse -Width 900 -HidePref $true -PinnedOpen $true)) 'clicking Tips pins the pane open even on a narrow window'
+
 Write-Host ''
 Write-Host "Results: $($script:passed) passed, $($script:failed) failed"
 if ($script:failed -gt 0) { exit 1 }
