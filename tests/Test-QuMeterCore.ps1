@@ -51,7 +51,7 @@ Assert-Eq $r.timeoutMs 2500 'timeout round-trip'
 Assert-Eq $r.retentionDays 30 'retention round-trip'
 Assert-Eq $r.eaFormat 'advanced' 'eaFormat round-trip'
 Assert-Eq $r.eaRemarks 'Imported by QuMeter' 'eaRemarks default when omitted'
-Assert-Eq $r.excludeNoSerial $false 'excludeNoSerial default when omitted'
+Assert-Eq $r.excludeNoSerial $true 'excludeNoSerial default when omitted'
 Assert-True (-not $r.Contains('deploy')) 'deploy key stripped on read of saved config'
 $c.excludeNoSerial = $true
 Save-QmConfig -Config $c -Path (Join-Path $tmp 'exclude-noserial.json')
@@ -76,7 +76,7 @@ Assert-Eq $pr.schedule.frequency 'Daily' 'missing nested keys fall back to defau
 Assert-Eq $pr.schedule.time '07:15' 'partial nested override kept'
 Assert-True (-not $pr.Contains('deploy')) 'missing deploy stays absent (no default deploy block)'
 Assert-Eq $pr.eaRemarks 'Imported by QuMeter' 'missing eaRemarks falls back to default'
-Assert-Eq $pr.excludeNoSerial $false 'missing excludeNoSerial falls back to false'
+Assert-Eq $pr.excludeNoSerial $true 'missing excludeNoSerial falls back to true'
 Assert-Eq (Test-QmConfig -Config $r -Root $tmp).Count 0 'valid config passes validation'
 $bad = Get-QmDefaultConfig; $bad.schedule.time = '25:00'; $bad.schedule.frequency = 'Weekly'; $bad.schedule.dayOfWeek = 'Funday'
 $errs = Test-QmConfig -Config $bad -Root $tmp

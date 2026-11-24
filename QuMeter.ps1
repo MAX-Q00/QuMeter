@@ -208,7 +208,7 @@ $grid = Add-C $left (New-Object Windows.Forms.DataGridView -Property @{
     AllowUserToResizeColumns = $true; AllowUserToOrderColumns = $true
     ShowCellToolTips = $true
 })
-$top = Add-C $left (New-Object Windows.Forms.Panel -Property @{ Dock = 'Top'; Height = 368 })
+$top = Add-C $left (New-Object Windows.Forms.Panel -Property @{ Dock = 'Top'; Height = 396 })
 $bottom = Add-C $left (New-Object Windows.Forms.Panel -Property @{ Dock = 'Bottom'; Height = 78 })
 $M = $top
 
@@ -285,16 +285,18 @@ Set-Acc $customerFilter 'Customer'
 $customerFilter.SelectedIndex = 0
 $customerFilter.Enabled = $true
 
-$excludeTo = Add-C $M (New-Object Windows.Forms.CheckBox -Property @{ Text = "Don't show printers that timed out in the grid or in exports"; Location = '10,218'; AutoSize = $true })
-Set-Acc $excludeTo 'Hide printers that timed out'
-if ($saved.PSObject.Properties.Name -contains 'excludeTimedOut' -and $saved.excludeTimedOut) { $excludeTo.Checked = $true }
+$excludeTo = Add-C $M (New-Object Windows.Forms.CheckBox -Property @{ Text = 'Exclude IPs that are timing out'; Location = '10,218'; AutoSize = $false })
+Set-Acc $excludeTo 'Exclude IPs that are timing out'
+$excludeTo.Checked = $true
+if ($saved -and ($saved.PSObject.Properties.Name -contains 'excludeTimedOut')) { $excludeTo.Checked = [bool]$saved.excludeTimedOut }
 
-$excludeNoSerial = Add-C $M (New-Object Windows.Forms.CheckBox -Property @{ Text = "Don't show printers with no serial number in the grid or in exports"; Location = '10,240'; AutoSize = $true })
-Set-Acc $excludeNoSerial 'Hide printers with no serial number'
-if ($script:cfg -and $script:cfg.excludeNoSerial) { $excludeNoSerial.Checked = $true }
-if ($saved -and ($saved.PSObject.Properties.Name -contains 'excludeNoSerial') -and $saved.excludeNoSerial) { $excludeNoSerial.Checked = $true }
+$excludeNoSerial = Add-C $M (New-Object Windows.Forms.CheckBox -Property @{ Text = 'Only show/include devices that are reporting serial numbers(Usually Only Printers)'; Location = '10,240'; AutoSize = $false })
+Set-Acc $excludeNoSerial 'Only show/include devices that are reporting serial numbers(Usually Only Printers)'
+$excludeNoSerial.Checked = $true
+if ($saved -and ($saved.PSObject.Properties.Name -contains 'excludeNoSerial')) { $excludeNoSerial.Checked = [bool]$saved.excludeNoSerial }
+elseif ($script:cfg -and ($script:cfg.PSObject.Properties.Name -contains 'excludeNoSerial')) { $excludeNoSerial.Checked = [bool]$script:cfg.excludeNoSerial }
 
-New-L $M 'Responding IPs (did not time out) - copy this list to rescan only those printers:' 10 264 | Out-Null
+$lblResponded = New-L $M 'Responding IPs (did not time out) - copy this list to rescan only those printers:' 10 264
 $responded = Add-C $M (New-Object Windows.Forms.TextBox -Property @{ Location = '10,282'; Size = '520,54'; Multiline = $true; ReadOnly = $true; ScrollBars = 'Both'; WordWrap = $false; Font = $fontMono; BackColor = 'White' })
 Set-Acc $responded 'Responding IPs'
 $copyIps = New-B $scanCol '&Copy' 10 282 130 28
@@ -341,10 +343,16 @@ $st = New-L $bottom 'Paste printer IPs and click Scan.' 120 44
 $st.AutoSize = $true
 
 $manualTips = @"
-TIPS - USING THE MANUAL OUTPUT
+TIPS - USING THE MANUAL TAB
+
+SCAN
+Paste IPs, ranges (10.0.1.1-10.0.1.50 or 10.0.1.1-50) or CIDR (10.0.1.0/24), set the community (usually public), and click Scan. If the IP box is empty and an MPS list is imported, Scan queries the imported IPs for the selected customer (or every imported IP when All customers is selected) and merges the meters with the imported customer details. Click Stop scan to cancel a running scan: results already collected are kept, and addresses not yet probed are marked Cancelled. Exports warn you if the scan was stopped, because those results are incomplete.
 
 IMPORT LIST (MPS)
-Click Import List (MPS) under Scan to load an MPS fleet report (.xlsx or .csv). QuMeter reads the IP, customer, model, serial, and other columns, fills the results list, and stores that list until you import again. A new scan reads meters for the IPs currently shown and keeps the imported customer details. The Customer drop-down always starts with IP Search/No Customer (the default when no list is imported). After an import it also lists All customers and each customer; picking a customer shows only that customer's rows. If the IP box is empty, Scan queries the imported IPs for the selected customer. Clicking or tabbing into the IP box, or typing an IP or range, switches the drop-down to IP Search/No Customer, and Scan then uses the addresses in the box with no customer filter. Rows with no IP stay in the list but are not scanned. The imported list is saved in mps-import.json and comes back after you restart the app.
+Click Import List (MPS) under Scan to load an MPS fleet report (.xlsx or .csv). QuMeter reads the IP, customer, brand, model, serial, asset, and other columns, fills the results list, and stores that list until you import again. Older .xls files need to be saved as .xlsx first. Rows with no usable IP stay in the list (status No IP) and are not scanned. Blank rows are skipped. The imported list is saved in mps-import.json and comes back after you restart the app.
+
+CUSTOMER DROP-DOWN
+IP Search/No Customer is always the first item. It is the default (and the only item) when no list is imported. After an import, All customers and each customer in the file appear under it. Picking a customer shows only that customer's rows in the list. Clicking or tabbing into the Printer IPs box, or typing an IP or range, switches the drop-down to IP Search/No Customer. In that mode Scan uses the addresses in the box as a normal scan, with no customer filter.
 
 RECOMMENDED: e-automate workbook  (Export e-automate)
 Best path for updating meters on many serial numbers at once. Only printers that answered AND reported a serial are included.
@@ -366,20 +374,19 @@ Use this if you already have an MPS tool (for example FMAudit / Printanista) rep
 A single official "import this file into ECI MPS" template was not published in the public docs, so confirm the columns in your MPS tool before a live import.
 
 Excel workbook  (Export Excel)
-Opens in Excel with sheets for Results, e-automate, MPS, FMAudit, and import instructions. Timed-out IPs and IPs with no serial number are omitted if those boxes are checked. This is the record/spreadsheet export, not a substitute for the official e-automate template if the utility requires it.
+Opens in Excel with sheets for Results, e-automate, MPS, FMAudit, and import instructions. Timed-out IPs and devices with no serial number are omitted when those boxes are checked (they are checked by default). This is the record/spreadsheet export, not a substitute for the official e-automate template if the utility requires it.
 
 General CSV  (Export results CSV)
-Your record of the scan: date, time, IP, model, serial, total, mono, color, status and any error. Timeouts and IPs with no serial are included unless those boxes are checked.
+Your record of the scan: date, time, IP, model, serial, total, mono, color, status and any error. Timeouts and devices with no serial are left out when those boxes are checked (they are checked by default).
 
 Responding IP list
-After a scan, the box above the grid lists every address that did not time out, one per line, in the same format as the IP input. If printers with no serial are hidden, addresses with a blank or placeholder serial (N/A, unknown, 0) are omitted too. Click Copy and paste it back into the input to rescan only those printers.
-Click Stop scan to cancel a scan that is still running. Addresses already read are kept; addresses not yet probed are marked Cancelled. Exports warn you if the scan was stopped, because those results are incomplete.
+After a scan, the box above the grid lists every address that did not time out, one per line, in the same format as the IP input. When "Only show/include devices that are reporting serial numbers(Usually Only Printers)" is checked, addresses with a blank or placeholder serial (N/A, unknown, 0) are omitted too. Click Copy and paste it back into the input to rescan only those printers.
 
-Don't show printers that timed out
-When checked, timed-out addresses disappear from the grid and from every export. Printers that answered with an error still appear.
+Exclude IPs that are timing out
+This box is checked by default. When checked, timed-out addresses disappear from the grid and from every export. Printers that answered with an error still appear. Uncheck it if you want timeouts included.
 
-Don't show printers with no serial number
-When checked, printers with no serial number (blank, whitespace, N/A, unknown, or 0) disappear from the grid, from every export (Excel, e-automate, MPS, FMAudit, Export all, and results CSV), and from the Responding IPs list. The same checkbox on the Automate Settings tab is used by scheduled QuMeter Auto runs after it is saved.
+Only show/include devices that are reporting serial numbers(Usually Only Printers)
+This box is checked by default. When checked, devices with no serial number (blank, whitespace, N/A, unknown, or 0) disappear from the grid, from every export (Excel, e-automate, MPS, FMAudit, Export all, and results CSV), and from the Responding IPs list. The same checkbox on the Automate Settings tab is used by scheduled QuMeter Auto runs after it is saved.
 
 Meter remarks
 The Meter remarks box is written into the e-automate Remarks column (and the e-automate sheet in the Excel workbook). The default is Imported by QuMeter. Leave it empty for a blank remarks field. Commas and quotes are escaped in the CSV. Optional tokens, replaced per printer: {date} {time} {ip} {serial} {model}. The same remarks text is used by Automate / QuMeter Auto (including scheduled runs) after it is saved.
@@ -421,13 +428,34 @@ $f.Add_Shown({
             $manualTipsBox.Size = "$([math]::Max(20, $split.Panel2.ClientSize.Width - 12)),$([math]::Max(20, $split.Panel2.ClientSize.Height - 12))"
         }
     } catch { }
+    try { Fit-FilterCheckboxes } catch { }
 })
+function Fit-FilterCheckboxes {
+    $fieldW = [math]::Max(220, $M.ClientSize.Width - $scanCol.Width - 20)
+    foreach ($cb in @($excludeTo, $excludeNoSerial)) {
+        $cb.AutoSize = $false
+        $cb.Width = $fieldW
+        $pref = $cb.GetPreferredSize((New-Object Drawing.Size($fieldW, 0)))
+        $cb.Height = [math]::Max(20, [int]$pref.Height)
+    }
+    $excludeTo.Location = New-Object Drawing.Point(10, 218)
+    $excludeNoSerial.Location = New-Object Drawing.Point(10, ($excludeTo.Bottom + 2))
+    if ($lblResponded) { $lblResponded.Location = New-Object Drawing.Point(10, ($excludeNoSerial.Bottom + 4)) }
+    if ($responded -and $lblResponded) {
+        $responded.Location = New-Object Drawing.Point(10, ($lblResponded.Bottom + 2))
+        $leftH = $M.ClientSize.Height
+        $boxH = [math]::Max(36, $leftH - $responded.Top - 8)
+        $responded.Size = New-Object Drawing.Size($fieldW, $boxH)
+        if ($copyIps) { $copyIps.Top = $responded.Top }
+    }
+}
 $M.Add_Resize({
     $fieldW = [math]::Max(220, $M.ClientSize.Width - $scanCol.Width - 20)
     $targets.Width = $fieldW
     $responded.Width = $fieldW
     $remarks.Width = [math]::Max(160, $fieldW - 100)
     if ($customerFilter) { $customerFilter.Width = [math]::Max(160, $fieldW - 68) }
+    Fit-FilterCheckboxes
 })
 
 $script:scanJob = $null
@@ -1001,8 +1029,8 @@ $aFmt = New-Object Windows.Forms.ComboBox -Property @{ DropDownStyle = 'DropDown
 $aSrc = New-Object Windows.Forms.TextBox
 $aRemarks = New-Object Windows.Forms.TextBox
 $aRemarks.Text = $initialRemarks
-$aExcludeNoSerial = New-Object Windows.Forms.CheckBox -Property @{ Text = "Don't include printers with no serial number in exports"; AutoSize = $true }
-if ($excludeNoSerial.Checked) { $aExcludeNoSerial.Checked = $true }
+$aExcludeNoSerial = New-Object Windows.Forms.CheckBox -Property @{ Text = 'Only show/include devices that are reporting serial numbers(Usually Only Printers)'; AutoSize = $false }
+$aExcludeNoSerial.Checked = [bool]$excludeNoSerial.Checked
 $aMap = New-Object Windows.Forms.TextBox
 $bMap = New-Object Windows.Forms.Button -Property @{ Text = 'Browse...' }
 $bMapEdit = New-Object Windows.Forms.Button -Property @{ Text = 'Edit mapping...' }
@@ -1038,8 +1066,9 @@ $pathTlp.Controls.Add($aSrc, 1, $r); $aSrc.Dock = 'Fill'
 $r++; Add-PathStyle $pathTlp
 $pathTlp.Controls.Add((New-Object Windows.Forms.Label -Property @{ Text = '&Meter remarks'; AutoSize = $true; Anchor = 'Left' }), 0, $r)
 $pathTlp.Controls.Add($aRemarks, 1, $r); $aRemarks.Dock = 'Fill'; $pathTlp.SetColumnSpan($aRemarks, 3)
-$r++; Add-PathStyle $pathTlp
+$r++; [void]$pathTlp.RowStyles.Add((New-Object Windows.Forms.RowStyle([Windows.Forms.SizeType]::Absolute, 44)))
 $pathTlp.Controls.Add($aExcludeNoSerial, 0, $r); $pathTlp.SetColumnSpan($aExcludeNoSerial, 4)
+$aExcludeNoSerial.Dock = 'Fill'
 $r++; Add-PathStyle $pathTlp
 $pathTlp.Controls.Add((New-Object Windows.Forms.Label -Property @{ Text = 'Mappin&g file'; AutoSize = $true; Anchor = 'Left' }), 0, $r)
 $pathTlp.Controls.Add($aMap, 1, $r); $aMap.Dock = 'Fill'
@@ -1047,7 +1076,7 @@ $pathTlp.Controls.Add($bMap, 2, $r)
 $pathTlp.Controls.Add($bMapEdit, 3, $r)
 Set-Acc $aOut 'Output folder'; Set-Acc $aMps 'MPS drop folder'; Set-Acc $aLogF 'Log folder'
 Set-Acc $aRet 'Keep files (days)'; Set-Acc $aFmt 'e-automate format'; Set-Acc $aSrc 'Meter source'
-Set-Acc $aRemarks 'Meter remarks'; Set-Acc $aExcludeNoSerial 'Hide printers with no serial number in exports'
+Set-Acc $aRemarks 'Meter remarks'; Set-Acc $aExcludeNoSerial 'Only show/include devices that are reporting serial numbers(Usually Only Printers)'
 Set-Acc $aMap 'Mapping file'; Set-Acc $bMapEdit 'Edit mapping'
 Set-Acc $aOutPath 'Resolved output folder'; Set-Acc $aMpsPath 'Resolved MPS drop folder'; Set-Acc $aLogPath 'Resolved log folder'
 
@@ -1107,7 +1136,7 @@ Files older than "Keep files" days are deleted from the output and log folders (
 GETTING METERS INTO E-AUTOMATE
 e-automate matches each row to equipment by Model + Serial. Equipment Number is left blank.
 Scheduled runs write a CSV. To import it, paste its rows into the official EA_MeterImport.xlsx template (the utility accepts .xlsx only). Open the template, set Source (must already exist in Lists and Codes; not Contract, Service Call or Web), paste the e-automate CSV rows under the headers on row 8, and run the import.
-Meter remarks come from the Meter remarks box on this Settings tab (default Imported by QuMeter). Leave it empty for a blank remarks field. Optional tokens, replaced per printer: {date} {time} {ip} {serial} {model}. Check "Don't include printers with no serial number in exports" to leave printers with a blank or placeholder serial (N/A, unknown, 0) out of the general, e-automate, and MPS files. Click Save settings so scheduled QuMeter Auto runs use the remarks and this checkbox (they are stored in config.json).
+Meter remarks come from the Meter remarks box on this Settings tab (default Imported by QuMeter). Leave it empty for a blank remarks field. Optional tokens, replaced per printer: {date} {time} {ip} {serial} {model}. The "Only show/include devices that are reporting serial numbers(Usually Only Printers)" box is checked by default and is the same setting as on the Manual tab. When it is checked, devices with a blank or placeholder serial (N/A, unknown, 0) are left out of the general, e-automate, and MPS files. Click Save settings so scheduled QuMeter Auto runs use the remarks and this checkbox (they are stored in config.json).
 
 OUTPUT TO A NETWORK SHARE
 Output and MPS folders can be UNC paths like \\fileserver\meters so files land where you and e-automate can reach them.

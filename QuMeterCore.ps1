@@ -49,7 +49,7 @@ function Get-QmDefaultConfig {
         eaFormat      = 'basic'
         eaSource      = 'SNMP'
         eaRemarks     = 'Imported by QuMeter'
-        excludeNoSerial = $false
+        excludeNoSerial = $true
         retentionDays = 90
         schedule      = [ordered]@{
             taskName   = 'QuMeter Auto'
