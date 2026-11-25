@@ -1,0 +1,177 @@
+using System;
+using System.IO;
+using System.Management.Automation;
+using System.Reflection;
+using System.Threading;
+using System.Windows.Forms;
+
+namespace QuSpace.QuMeter
+{
+    internal static class Program
+    {
+        [STAThread]
+        private static int Main(string[] args)
+        {
+            try
+            {
+                Application.EnableVisualStyles();
+                Application.SetCompatibleTextRenderingDefault(false);
+
+                string appDir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
+                if (string.IsNullOrEmpty(appDir))
+                    appDir = AppDomain.CurrentDomain.BaseDirectory;
+
+                bool engine = false;
+                string config = null;
+                string progress = null;
+                string trigger = "schedule";
+
+                for (int i = 0; i < args.Length; i++)
+                {
+                    string a = args[i];
+                    if (string.Equals(a, "--engine", StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(a, "-engine", StringComparison.OrdinalIgnoreCase))
+                    {
+                        engine = true;
+                    }
+                    else if ((string.Equals(a, "--config", StringComparison.OrdinalIgnoreCase) ||
+                              string.Equals(a, "-config", StringComparison.OrdinalIgnoreCase)) && i + 1 < args.Length)
+                    {
+                        config = args[++i];
+                    }
+                    else if ((string.Equals(a, "--progress", StringComparison.OrdinalIgnoreCase) ||
+                              string.Equals(a, "-progress", StringComparison.OrdinalIgnoreCase)) && i + 1 < args.Length)
+                    {
+                        progress = args[++i];
+                    }
+                    else if ((string.Equals(a, "--trigger", StringComparison.OrdinalIgnoreCase) ||
+                              string.Equals(a, "-trigger", StringComparison.OrdinalIgnoreCase)) && i + 1 < args.Length)
+                    {
+                        trigger = args[++i];
+                    }
+                }
+
+                string script = Path.Combine(appDir, engine ? "QuMeterEngine.ps1" : "QuMeter.ps1");
+                if (!File.Exists(script))
+                {
+                    MessageBox.Show("QuMeter script not found:\n" + script, "QuMeter", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    return 1;
+                }
+
+                return RunScript(appDir, script, engine, config, progress, trigger);
+            }
+            catch (Exception ex)
+            {
+                try
+                {
+                    MessageBox.Show(ex.Message, "QuMeter", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+                catch { }
+                return 1;
+            }
+        }
+
+        private static int RunScript(string appDir, string scriptPath, bool engine, string config, string progress, string trigger)
+        {
+            // Host Windows PowerShell 5.1 in-process on this STA thread (required for WinForms).
+            using (PowerShell ps = PowerShell.Create())
+            {
+                ps.Runspace.SessionStateProxy.Path.SetLocation(appDir);
+
+                if (engine)
+                {
+                    var sb = new System.Text.StringBuilder();
+                    sb.Append("& '").Append(EscapePsSingle(scriptPath)).Append("'");
+                    if (!string.IsNullOrEmpty(config))
+                        sb.Append(" -ConfigPath '").Append(EscapePsSingle(config)).Append("'");
+                    if (!string.IsNullOrEmpty(progress))
+                        sb.Append(" -ProgressFile '").Append(EscapePsSingle(progress)).Append("'");
+                    if (!string.IsNullOrEmpty(trigger))
+                        sb.Append(" -Trigger '").Append(EscapePsSingle(trigger)).Append("'");
+                    ps.AddScript(sb.ToString());
+                }
+                else
+                {
+                    ps.AddScript("& '" + EscapePsSingle(scriptPath) + "'");
+                }
+
+                try
+                {
+                    ps.Invoke();
+                }
+                catch (ExitException exitEx)
+                {
+                    return GetExitCode(exitEx);
+                }
+                catch (RuntimeException rex)
+                {
+                    ExitException nested = FindExitException(rex);
+                    if (nested != null) return GetExitCode(nested);
+                    if (engine)
+                    {
+                        Console.Error.WriteLine(rex.Message);
+                        return 1;
+                    }
+                    MessageBox.Show(rex.Message, "QuMeter", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    return 1;
+                }
+
+                if (ps.HadErrors)
+                {
+                    foreach (var err in ps.Streams.Error)
+                    {
+                        ExitException nested = FindExitException(err.Exception);
+                        if (nested != null) return GetExitCode(nested);
+                    }
+                    if (engine)
+                    {
+                        foreach (var err in ps.Streams.Error)
+                            Console.Error.WriteLine(err.ToString());
+                        return 1;
+                    }
+                }
+
+                int code = Environment.ExitCode;
+                return code;
+            }
+        }
+
+        private static string EscapePsSingle(string s)
+        {
+            if (s == null) return string.Empty;
+            return s.Replace("'", "''");
+        }
+
+        private static ExitException FindExitException(Exception ex)
+        {
+            while (ex != null)
+            {
+                ExitException ee = ex as ExitException;
+                if (ee != null) return ee;
+                ex = ex.InnerException;
+            }
+            return null;
+        }
+
+        private static int GetExitCode(ExitException ex)
+        {
+            try
+            {
+                PropertyInfo pi = typeof(ExitException).GetProperty("ExitCode", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                if (pi != null)
+                {
+                    object v = pi.GetValue(ex, null);
+                    if (v is int) return (int)v;
+                }
+                FieldInfo fi = typeof(ExitException).GetField("exitCode", BindingFlags.Instance | BindingFlags.NonPublic);
+                if (fi != null)
+                {
+                    object v = fi.GetValue(ex);
+                    if (v is int) return (int)v;
+                }
+            }
+            catch { }
+            return Environment.ExitCode != 0 ? Environment.ExitCode : 0;
+        }
+    }
+}

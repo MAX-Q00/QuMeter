@@ -17,7 +17,7 @@ Assert-Eq (Get-QmPublisher) 'QuSpace Studios LLC' 'publisher constant'
 Assert-Eq (Get-QmProductName) 'QuMeter' 'product name'
 Assert-True ((Get-QmCopyrightText -Ascii) -match 'QuSpace Studios LLC') 'ASCII copyright mentions publisher'
 Assert-True ((Get-QmFeedbackMailto) -match 'mailto:dylan@quspace.studio') 'feedback mailto uses studio email'
-Assert-True ((Get-QmFeedbackMailto) -match 'QuMeter%20feedback%20%28v2\.2\.4%29') 'mailto subject includes version'
+Assert-True ((Get-QmFeedbackMailto) -match 'subject=QuMeter%20feedback%20.*v2\.2\.4') 'mailto subject includes version'
 Assert-Eq (Get-QmFeedbackIssuesUrl) 'https://github.com/MAX-Q00/QuMeter/issues/new' 'GitHub issues URL'
 
 Write-Host '=== Version compare and asset names ==='
@@ -101,8 +101,28 @@ Assert-True $bad 'hash mismatch throws'
 Write-Host '=== Payload list ==='
 $names = Get-QmAppPayloadFiles
 Assert-True ($names -contains 'QuMeter.ps1' -and $names -contains 'QuMeterUpdate.ps1') 'payload includes GUI and updater'
+Assert-True ($names -contains 'QuMeter.exe' -and $names -contains 'QuSnmp.dll') 'payload includes launcher and SNMP dll'
 Assert-True ($names -notcontains 'settings.json' -and $names -notcontains 'config.json' -and $names -notcontains 'mps-import.json') 'payload does not include user data'
 Assert-True ((Get-QmUserDataFileNames) -contains 'mps-import.json') 'user data list includes mps-import.json'
+
+Write-Host '=== Packaged update gate ==='
+$prevForce = $env:QUMETER_FORCE_PACKAGED
+try {
+    $env:QUMETER_FORCE_PACKAGED = '1'
+    $script:QmPackageProbeDone = $false
+    Assert-True (Test-QmIsPackaged) 'force packaged'
+    Assert-True (-not (Test-QmUpdatesAllowed)) 'updates blocked when packaged'
+    Assert-True ((Get-QmStoreUpdateMessage) -match 'Microsoft Store') 'store update message'
+    $blocked = $false
+    try {
+        Install-QmUpdateFromRelease -Release ([pscustomobject]@{ Version='9.9.9'; AssetUrl='https://example.invalid/x.zip'; ExpectedZipName='QuMeter-9.9.9.zip' }) -AppDir $appdir | Out-Null
+    } catch { $blocked = ("$($_.Exception.Message)" -match 'Microsoft Store') }
+    Assert-True $blocked 'Install-QmUpdateFromRelease throws Store message when packaged'
+} finally {
+    if ($null -eq $prevForce -or $prevForce -eq '') { Remove-Item Env:\QUMETER_FORCE_PACKAGED -ErrorAction SilentlyContinue }
+    else { $env:QUMETER_FORCE_PACKAGED = $prevForce }
+    $script:QmPackageProbeDone = $false
+}
 
 Write-Host ''
 Write-Host "Results: $($script:passed) passed, $($script:failed) failed"

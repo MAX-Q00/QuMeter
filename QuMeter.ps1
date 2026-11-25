@@ -6,6 +6,8 @@ Add-Type -AssemblyName System.Windows.Forms, System.Drawing
 $app = $PSScriptRoot
 . (Join-Path $app 'QuSnmp.ps1')
 . (Join-Path $app 'QuMeterCore.ps1')
+$script:QmCoreRoot = $app
+$data = Initialize-QmDataDir -AppDir $app
 [System.Windows.Forms.Application]::EnableVisualStyles()
 $wm = @'
 using System;
@@ -92,10 +94,15 @@ function Show-ActiveTabStatus {
 }
 
 
-$settingsPath = Join-Path $app 'settings.json'
-$mappingPath  = Join-Path $app 'e-automate.mapping.json'
-$configPath   = Join-Path $app 'config.json'
+$settingsPath = Join-Path $data 'settings.json'
+$mappingPath  = Join-Path $data 'e-automate.mapping.json'
+$configPath   = Join-Path $data 'config.json'
+if (-not (Test-Path -LiteralPath $mappingPath)) {
+    $packMap = Join-Path $app 'e-automate.mapping.json'
+    if (Test-Path -LiteralPath $packMap) { $mappingPath = $packMap }
+}
 $psExe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+$qmExe = Join-Path $app 'QuMeter.exe'
 
 function Load-Settings {
     if (-not (Test-Path -LiteralPath $settingsPath)) { return $null }
@@ -190,6 +197,10 @@ function Browse-Folder($box) {
 function Test-IsAdmin { ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator) }
 
 $f = New-Object Windows.Forms.Form -Property @{ Text = "QuMeter $(Get-QmVersion)"; Size = '1100,820'; MinimumSize = '900,640'; StartPosition = 'CenterScreen'; Font = New-Object Drawing.Font('Segoe UI', 9); AutoScaleMode = 'Dpi'; AutoScaleDimensions = New-Object Drawing.SizeF(96, 96) }
+$icoPath = Join-Path $app 'QuMeter.ico'
+if (Test-Path -LiteralPath $icoPath) {
+    try { $f.Icon = New-Object Drawing.Icon $icoPath } catch { }
+}
 $tabs = New-Object Windows.Forms.TabControl -Property @{ Dock = 'Fill' }
 $tabManual = New-Object Windows.Forms.TabPage -Property @{ Text = 'Manual'; Padding = '6,6,6,6'; AutoScroll = $false }
 $tabAuto   = New-Object Windows.Forms.TabPage -Property @{ Text = (Get-QmAutomateTabText); Padding = '6,6,6,6'; AutoScroll = $true; AutoScrollMinSize = New-Object Drawing.Size(860, 600) }
@@ -273,7 +284,7 @@ $script:lastExportFolder = $null
 if ($saved -and ($saved.PSObject.Properties.Name -contains 'lastExportFolder') -and $saved.lastExportFolder) { $script:lastExportFolder = [string]$saved.lastExportFolder }
 $script:lastMpsImportFolder = $null
 if ($saved -and ($saved.PSObject.Properties.Name -contains 'lastMpsImportFolder') -and $saved.lastMpsImportFolder) { $script:lastMpsImportFolder = [string]$saved.lastMpsImportFolder }
-$script:mpsImportPath = Get-QmMpsImportPath $app
+$script:mpsImportPath = Get-QmMpsImportPath $data
 $script:mpsImport = $null
 $script:mpsSelectedCustomer = Get-QmMpsIpSearchLabel
 $script:listSource = ''
@@ -832,10 +843,10 @@ function Get-LastExportDir {
     try {
         $folder = 'output'
         if ($script:cfg -and $script:cfg.outputFolder) { $folder = $script:cfg.outputFolder }
-        $p = Resolve-QmPath $folder $app
+        $p = Resolve-QmPath $folder $data
         if (Test-Path -LiteralPath $p) { return $p }
     } catch { }
-    return $app
+    return $data
 }
 function Remember-ExportPath([string]$path) {
     if (-not $path) { return }
@@ -1466,7 +1477,7 @@ $script:cfgDirty = $false
 $script:cfgLoading = $false
 function Get-QmResolvedDisplay([string]$raw, [string]$fallback) {
     $v = if ([string]::IsNullOrWhiteSpace($raw)) { $fallback } else { $raw }
-    try { return (Resolve-QmPath $v $app) } catch { return $v }
+    try { return (Resolve-QmPath $v $data) } catch { return $v }
 }
 function Update-PathLabels {
     $aOutPath.Text = "Saves to: $(Get-QmResolvedDisplay $aOut.Text 'output')"
@@ -1553,7 +1564,7 @@ function Update-Enables {
 }
 function Save-All([switch]$Quiet) {
     $c = Get-ConfigFromGui
-    $errs = Test-QmConfig -Config $c -Root $app
+    $errs = Test-QmConfig -Config $c -Root $data
     if ($errs.Count) {
         $aValid.ForeColor = 'Firebrick'; $aValid.Text = ($errs -join '  ')
         Msg ("Please fix:`n - " + ($errs -join "`n - ")) 'Warning'
@@ -1589,7 +1600,7 @@ $aLoad.Add_Click({
 })
 $bOut.Add_Click({ Browse-Folder $aOut }); $bMps.Add_Click({ Browse-Folder $aMps }); $bLog.Add_Click({ Browse-Folder $aLogF })
 $bMap.Add_Click({ $d = New-Object Windows.Forms.OpenFileDialog -Property @{ Filter = 'JSON (*.json)|*.json' }; if ($d.ShowDialog() -eq 'OK') { $aMap.Text = $d.FileName } })
-$bMapEdit.Add_Click({ $p = Resolve-QmPath $(if ($aMap.Text) { $aMap.Text } else { 'e-automate.mapping.json' }) $app; Start-Process notepad.exe -ArgumentList "`"$p`"" })
+$bMapEdit.Add_Click({ $p = Resolve-QmPath $(if ($aMap.Text) { $aMap.Text } else { 'e-automate.mapping.json' }) $data; Start-Process notepad.exe -ArgumentList "`"$p`"" })
 $aSave.Add_Click({ [void](Save-All) })
 $aReload.Add_Click({ $script:cfg = Read-QmConfig -Path $configPath; Set-GuiFromConfig $script:cfg })
 $remarks.Add_TextChanged({ if ($aRemarks.Text -ne $remarks.Text) { $aRemarks.Text = $remarks.Text } })
@@ -1609,9 +1620,9 @@ $sTime.Add_ValueChanged({ Set-CfgDirty $true })
 
 # ------------------------------------------------------------------ Run once now (local)
 $script:runProc = $null; $script:runProgFile = $null; $script:runPos = 0
-function Get-LocalFolder([string]$which) { $v = $script:cfg[$which]; if (-not $v) { return $null }; return Resolve-QmPath $v $app }
+function Get-LocalFolder([string]$which) { $v = $script:cfg[$which]; if (-not $v) { return $null }; return Resolve-QmPath $v $data }
 function Read-LocalStatus {
-    $lf = Get-LocalFolder 'logFolder'; if (-not $lf) { $lf = Join-Path $app 'logs' }
+    $lf = Get-LocalFolder 'logFolder'; if (-not $lf) { $lf = Join-Path $data 'logs' }
     $p = Join-Path $lf 'status.json'
     if (-not (Test-Path -LiteralPath $p)) { return $null }
     try { return Read-QmStatus -Json ([System.IO.File]::ReadAllText($p)) } catch { return $null }
@@ -1633,8 +1644,13 @@ $runOnce.Add_Click({
     $runLog.Clear(); $runBar.Value = 0; $runBar.Maximum = 100
     $runStatus.ForeColor = 'Black'; $runStatus.Text = 'Starting...'
     $psi = New-Object System.Diagnostics.ProcessStartInfo
-    $psi.FileName = $psExe
-    $psi.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$(Join-Path $app 'QuMeterEngine.ps1')`" -ConfigPath `"$configPath`" -ProgressFile `"$($script:runProgFile)`" -Trigger manual"
+    if ((Test-Path -LiteralPath $qmExe) -and (Test-QmIsPackaged)) {
+        $psi.FileName = $qmExe
+        $psi.Arguments = "--engine --config `"$configPath`" --progress `"$($script:runProgFile)`" --trigger manual"
+    } else {
+        $psi.FileName = $psExe
+        $psi.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$(Join-Path $app 'QuMeterEngine.ps1')`" -ConfigPath `"$configPath`" -ProgressFile `"$($script:runProgFile)`" -Trigger manual"
+    }
     $psi.UseShellExecute = $false; $psi.CreateNoWindow = $true; $psi.WorkingDirectory = $app
     try { $script:runProc = [System.Diagnostics.Process]::Start($psi) } catch { $runStatus.ForeColor = 'Firebrick'; $runStatus.Text = "Could not start the engine: $($_.Exception.Message)"; return }
     $runOnce.Enabled = $false
@@ -1745,7 +1761,14 @@ $sRemove.Add_Click({
     catch { $sStatus.Text = "Remove failed: $($_.Exception.Message)" }
 })
 $sAdmin.Add_Click({
-    try { Start-Process $psExe -Verb RunAs -ArgumentList "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$(Join-Path $app 'QuMeter.ps1')`""; $f.Close() } catch { }
+    try {
+        if (Test-Path -LiteralPath $qmExe) {
+            Start-Process $qmExe -Verb RunAs
+        } else {
+            Start-Process $psExe -Verb RunAs -ArgumentList "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$(Join-Path $app 'QuMeter.ps1')`""
+        }
+        $f.Close()
+    } catch { }
 })
 
 # ------------------------------------------------------------------ start
@@ -1778,6 +1801,10 @@ function Stop-QmBackgroundUpdateCheck {
     }
 }
 function Invoke-QmUpdateInstall($rel) {
+    if (Test-QmIsPackaged) {
+        Msg (Get-QmStoreUpdateMessage) 'Information' 'Check for updates'
+        return
+    }
     $pubUpdate.Text = ("Downloading QuMeter {0}..." -f $rel.Version)
     $f.Cursor = 'WaitCursor'
     try {
@@ -1791,11 +1818,22 @@ function Invoke-QmUpdateInstall($rel) {
     }
 }
 function Show-QmUpdatePrompt($rel) {
+    if (Test-QmIsPackaged) {
+        Msg (Get-QmStoreUpdateMessage) 'Information' 'Check for updates'
+        return
+    }
     $msg = "QuMeter $($rel.Version) is available (you have $(Get-QmVersion)). Download and install the update from GitHub Releases now?"
     if (Ask $msg) { Invoke-QmUpdateInstall $rel }
 }
 function Show-QmUpdateCheck {
     param([switch]$QuietIfCurrent)
+    if (Test-QmIsPackaged) {
+        $msg = Get-QmStoreUpdateMessage
+        if (-not $QuietIfCurrent) { Msg $msg 'Information' 'Check for updates' }
+        else { Set-AppStatus $msg }
+        $pubUpdate.Text = 'Check for updates'
+        return
+    }
     $pubUpdate.Text = 'Checking for updates...'
     Set-AppStatus 'Checking for updates...'
     $cur = Get-QmVersion
@@ -1821,6 +1859,7 @@ function Show-QmUpdateCheck {
     Show-QmUpdatePrompt $rel
 }
 function Start-QmBackgroundUpdateCheck {
+    if (Test-QmIsPackaged) { return }
     Stop-QmBackgroundUpdateCheck
     $script:updateRs = [runspacefactory]::CreateRunspace()
     $script:updateRs.Open()
@@ -1852,6 +1891,7 @@ function Start-QmBackgroundUpdateCheck {
 }
 $pubUpdate.Add_Click({ Show-QmUpdateCheck })
 $f.Add_Shown({
+    if (Test-QmIsPackaged) { return }
     $script:updateTimer = New-Object Windows.Forms.Timer -Property @{ Interval = 800 }
     $script:updateTimer.Add_Tick({
         try {

@@ -15,10 +15,12 @@ $here = $PSScriptRoot
 if (-not $here) { $here = Split-Path -Parent $MyInvocation.MyCommand.Path }
 . (Join-Path $here 'QuSnmp.ps1')
 . (Join-Path $here 'QuMeterCore.ps1')
+$script:QmCoreRoot = $here
+$data = Initialize-QmDataDir -AppDir $here
 
-if (-not $ConfigPath) { $ConfigPath = Join-Path $here 'config.json' }
+if (-not $ConfigPath) { $ConfigPath = Join-Path $data 'config.json' }
 $root = Split-Path -Parent $ConfigPath
-if (-not $root) { $root = $here }
+if (-not $root) { $root = $data }
 
 $script:logPath = $null
 $script:statusFolder = Join-Path $root 'logs'

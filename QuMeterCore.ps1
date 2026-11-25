@@ -31,6 +31,151 @@ function Join-QmWinPath {
     return ($Base.TrimEnd('\','/') + '\' + $Child.TrimStart('\','/'))
 }
 
+# ---------------------------------------------------------------- packaged / data dirs (MSIX)
+$script:QmPackageProbeDone = $false
+$script:QmIsPackagedCache = $false
+if (-not ('QmPackageIdentity' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+public static class QmPackageIdentity {
+  [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+  static extern int GetCurrentPackageFullName(ref int length, StringBuilder name);
+  public static bool IsPackaged() {
+    int len = 0;
+    int hr = GetCurrentPackageFullName(ref len, null);
+    // APPMODEL_ERROR_NO_PACKAGE = 15700 (0x3D54) when not packaged; other codes mean packaged (buffer too small etc.)
+    return hr != 15700;
+  }
+}
+'@ -ErrorAction SilentlyContinue
+}
+
+function Get-QmAppDir {
+    if ($script:QmCoreRoot) { return $script:QmCoreRoot }
+    return (Get-Location).Path
+}
+
+function Test-QmAppDirWritable {
+    param([string]$AppDir = (Get-QmAppDir))
+    if ([string]::IsNullOrWhiteSpace($AppDir)) { return $false }
+    try {
+        if (-not (Test-Path -LiteralPath $AppDir)) { return $false }
+        $probe = Join-Path $AppDir ('.qm-write-' + [guid]::NewGuid().ToString('N'))
+        [System.IO.File]::WriteAllText($probe, 'ok')
+        Remove-Item -LiteralPath $probe -Force -ErrorAction SilentlyContinue
+        return $true
+    } catch {
+        return $false
+    }
+}
+
+function Test-QmIsPackaged {
+    if ($env:QUMETER_FORCE_PACKAGED -eq '1') { return $true }
+    if ($env:QUMETER_FORCE_PACKAGED -eq '0') { return $false }
+    if ($script:QmPackageProbeDone) { return [bool]$script:QmIsPackagedCache }
+    $script:QmPackageProbeDone = $true
+    $script:QmIsPackagedCache = $false
+    try {
+        if ('QmPackageIdentity' -as [type]) {
+            $script:QmIsPackagedCache = [QmPackageIdentity]::IsPackaged()
+        }
+    } catch {
+        $script:QmIsPackagedCache = $false
+    }
+    return [bool]$script:QmIsPackagedCache
+}
+
+function Test-QmUseDataDir {
+    if ($env:QUMETER_DATA_DIR) { return $true }
+    if (Test-QmIsPackaged) { return $true }
+    return -not (Test-QmAppDirWritable)
+}
+
+function Get-QmDataDir {
+    if ($env:QUMETER_DATA_DIR) {
+        $d = $env:QUMETER_DATA_DIR.Trim()
+        if ($d) {
+            if (-not (Test-Path -LiteralPath $d)) { New-Item -ItemType Directory -Path $d -Force | Out-Null }
+            return $d
+        }
+    }
+    if (Test-QmUseDataDir) {
+        $local = $env:LOCALAPPDATA
+        if (-not $local) { $local = Join-Path $env:USERPROFILE 'AppData\Local' }
+        $d = Join-Path $local 'QuMeter'
+        if (-not (Test-Path -LiteralPath $d)) { New-Item -ItemType Directory -Path $d -Force | Out-Null }
+        return $d
+    }
+    return (Get-QmAppDir)
+}
+
+function Get-QmUserDataFileNamesForMigration {
+    @('settings.json', 'config.json', 'devices.txt', 'mps-import.json', 'e-automate.mapping.json')
+}
+
+function Get-QmLegacyDataRoots {
+    $roots = New-Object System.Collections.Generic.List[string]
+    foreach ($p in @(
+        (Join-Path $env:USERPROFILE 'QuMeter'),
+        (Join-Path $env:LOCALAPPDATA 'Programs\QuMeter'),
+        (Join-Path $env:USERPROFILE 'QuMeterAuto')
+    )) {
+        if ($p -and (Test-Path -LiteralPath $p)) { [void]$roots.Add($p) }
+    }
+    return ,$roots
+}
+
+function Initialize-QmDataDir {
+    # Seed mapping from the install dir and migrate legacy user data into %LOCALAPPDATA%\QuMeter (non-destructive).
+    param(
+        [string]$AppDir = (Get-QmAppDir),
+        [string]$DataDir = (Get-QmDataDir),
+        [string[]]$LegacyRoots
+    )
+    if (-not (Test-QmUseDataDir)) { return $DataDir }
+    if (-not (Test-Path -LiteralPath $DataDir)) { New-Item -ItemType Directory -Path $DataDir -Force | Out-Null }
+
+    # Migrate legacy user data first so a customized mapping is not shadowed by the package default.
+    $roots = @($LegacyRoots)
+    if ($roots.Count -eq 0) { $roots = @(Get-QmLegacyDataRoots) }
+    foreach ($legacy in $roots) {
+        if ([string]::IsNullOrWhiteSpace($legacy)) { continue }
+        if ([string]::Equals($legacy, $DataDir, [StringComparison]::OrdinalIgnoreCase)) { continue }
+        if (-not (Test-Path -LiteralPath $legacy)) { continue }
+        foreach ($name in (Get-QmUserDataFileNamesForMigration)) {
+            $src = Join-Path $legacy $name
+            $dst = Join-Path $DataDir $name
+            if ((Test-Path -LiteralPath $src) -and -not (Test-Path -LiteralPath $dst)) {
+                try { Copy-Item -LiteralPath $src -Destination $dst -Force } catch { }
+            }
+        }
+        foreach ($subdir in @('output', 'logs')) {
+            $srcDir = Join-Path $legacy $subdir
+            $dstDir = Join-Path $DataDir $subdir
+            if (-not (Test-Path -LiteralPath $srcDir)) { continue }
+            if (-not (Test-Path -LiteralPath $dstDir)) {
+                try { Copy-Item -LiteralPath $srcDir -Destination $dstDir -Recurse -Force } catch { }
+            }
+        }
+    }
+
+    $mapName = 'e-automate.mapping.json'
+    $destMap = Join-Path $DataDir $mapName
+    if (-not (Test-Path -LiteralPath $destMap)) {
+        $srcMap = Join-Path $AppDir $mapName
+        if (Test-Path -LiteralPath $srcMap) {
+            Copy-Item -LiteralPath $srcMap -Destination $destMap -Force
+        }
+    }
+    return $DataDir
+}
+
+function Get-QmStoreUpdateMessage {
+    return 'Updates for this install are managed through the Microsoft Store.'
+}
+
 # ---------------------------------------------------------------- config
 function Get-QmDefaultConfig {
     [ordered]@{
@@ -241,6 +386,7 @@ function ConvertTo-QmXmlText { param([string]$s) return [System.Security.Securit
 
 function Get-QmEngineArguments {
     param([Parameter(Mandatory)][string]$InstallDir)
+    if (Test-QmIsPackaged) { return '--engine' }
     $engine = Join-QmWinPath $InstallDir 'QuMeterEngine.ps1'
     $cfg = Join-QmWinPath $InstallDir 'config.json'
     return "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$engine`" -ConfigPath `"$cfg`""
@@ -276,7 +422,13 @@ function New-QmTaskXml {
         }
     }
     $desc = "QuMeter Auto $script:QmVersion, published by $script:QmPublisher - reads printer lifetime meters over SNMP and writes dated general / e-automate / MPS CSV files. Installed in $InstallDir."
-    $psExe = '%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe'
+    if (Test-QmIsPackaged) {
+        $cmd = 'QuMeter.exe'
+        $args = Get-QmEngineArguments -InstallDir $InstallDir
+    } else {
+        $cmd = '%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe'
+        $args = Get-QmEngineArguments -InstallDir $InstallDir
+    }
     return @"
 <?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
@@ -311,8 +463,8 @@ function New-QmTaskXml {
   </Settings>
   <Actions Context="Author">
     <Exec>
-      <Command>$(ConvertTo-QmXmlText $psExe)</Command>
-      <Arguments>$(ConvertTo-QmXmlText (Get-QmEngineArguments -InstallDir $InstallDir))</Arguments>
+      <Command>$(ConvertTo-QmXmlText $cmd)</Command>
+      <Arguments>$(ConvertTo-QmXmlText $args)</Arguments>
       <WorkingDirectory>$(ConvertTo-QmXmlText $InstallDir)</WorkingDirectory>
     </Exec>
   </Actions>
@@ -923,8 +1075,9 @@ function Import-QmMpsList {
 
 function Get-QmMpsImportPath {
     param([string]$AppDir)
-    if ([string]::IsNullOrWhiteSpace($AppDir)) { $AppDir = $script:QmCoreRoot }
-    return (Join-Path $AppDir 'mps-import.json')
+    $root = $AppDir
+    if ([string]::IsNullOrWhiteSpace($root)) { $root = Get-QmDataDir }
+    return (Join-Path $root 'mps-import.json')
 }
 
 function Save-QmMpsImport {

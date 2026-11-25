@@ -8,3 +8,13 @@ __pycache__/
 tests/tmp-out/
 *.zip
 backup/
+dist/
+bin/
+obj/
+*.msix
+*.pfx
+*.cer
+QuMeter.exe
+QuSnmp.dll
+packaging/launcher/bin/
+packaging/launcher/obj/
