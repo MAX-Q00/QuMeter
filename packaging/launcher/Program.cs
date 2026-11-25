@@ -123,17 +123,39 @@ namespace QuSpace.QuMeter
                         ExitException nested = FindExitException(err.Exception);
                         if (nested != null) return GetExitCode(nested);
                     }
-                    if (engine)
-                    {
-                        foreach (var err in ps.Streams.Error)
-                            Console.Error.WriteLine(err.ToString());
-                        return 1;
-                    }
                 }
 
-                int code = Environment.ExitCode;
-                return code;
+                // PS 5.1: `exit N` inside an &-invoked script sets $LASTEXITCODE and HadErrors
+                // without throwing ExitException or writing the error stream.
+                if (engine)
+                {
+                    int? last = TryGetLastExitCode(ps);
+                    if (last.HasValue) return last.Value;
+                }
+
+                if (ps.HadErrors && engine)
+                {
+                    foreach (var err in ps.Streams.Error)
+                        Console.Error.WriteLine(err.ToString());
+                    return 1;
+                }
+
+                return Environment.ExitCode != 0 ? Environment.ExitCode : 0;
             }
+        }
+
+        private static int? TryGetLastExitCode(PowerShell ps)
+        {
+            try
+            {
+                PSVariable v = ps.Runspace.SessionStateProxy.PSVariable.Get("LASTEXITCODE");
+                if (v == null || v.Value == null) return null;
+                if (v.Value is int) return (int)v.Value;
+                int parsed;
+                if (int.TryParse(Convert.ToString(v.Value), out parsed)) return parsed;
+            }
+            catch { }
+            return null;
         }
 
         private static string EscapePsSingle(string s)
@@ -157,6 +179,15 @@ namespace QuSpace.QuMeter
         {
             try
             {
+                // Windows PowerShell 5.1 stores the exit code in ExitException.Argument.
+                object arg = ex.Argument;
+                if (arg is int) return (int)arg;
+                if (arg != null)
+                {
+                    int parsed;
+                    if (int.TryParse(Convert.ToString(arg), out parsed)) return parsed;
+                }
+
                 PropertyInfo pi = typeof(ExitException).GetProperty("ExitCode", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
                 if (pi != null)
                 {

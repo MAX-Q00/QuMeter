@@ -116,6 +116,7 @@ function Get-QmUserDataFileNamesForMigration {
 }
 
 function Get-QmLegacyDataRoots {
+    # Emit string paths on the pipeline so @(Get-QmLegacyDataRoots) is a flat string[].
     $roots = New-Object System.Collections.Generic.List[string]
     foreach ($p in @(
         (Join-Path $env:USERPROFILE 'QuMeter'),
@@ -124,7 +125,7 @@ function Get-QmLegacyDataRoots {
     )) {
         if ($p -and (Test-Path -LiteralPath $p)) { [void]$roots.Add($p) }
     }
-    return ,$roots
+    return $roots.ToArray()
 }
 
 function Initialize-QmDataDir {
@@ -138,8 +139,12 @@ function Initialize-QmDataDir {
     if (-not (Test-Path -LiteralPath $DataDir)) { New-Item -ItemType Directory -Path $DataDir -Force | Out-Null }
 
     # Migrate legacy user data first so a customized mapping is not shadowed by the package default.
-    $roots = @($LegacyRoots)
-    if ($roots.Count -eq 0) { $roots = @(Get-QmLegacyDataRoots) }
+    # PS 5.1: @($null) has Count=1, so only discover when -LegacyRoots was omitted ($null).
+    if ($null -eq $LegacyRoots) {
+        $roots = @(Get-QmLegacyDataRoots)
+    } else {
+        $roots = @($LegacyRoots)
+    }
     foreach ($legacy in $roots) {
         if ([string]::IsNullOrWhiteSpace($legacy)) { continue }
         if ([string]::Equals($legacy, $DataDir, [StringComparison]::OrdinalIgnoreCase)) { continue }
@@ -385,10 +390,18 @@ function ConvertTo-QmStatusText {
 function ConvertTo-QmXmlText { param([string]$s) return [System.Security.SecurityElement]::Escape("$s") }
 
 function Get-QmEngineArguments {
-    param([Parameter(Mandatory)][string]$InstallDir)
-    if (Test-QmIsPackaged) { return '--engine' }
+    param(
+        [Parameter(Mandatory)][string]$InstallDir,
+        [string]$DataDir
+    )
+    if ([string]::IsNullOrWhiteSpace($DataDir)) {
+        $DataDir = if (Test-QmUseDataDir) { Get-QmDataDir } else { $InstallDir }
+    }
+    $cfg = Join-QmWinPath $DataDir 'config.json'
+    if (Test-QmIsPackaged) {
+        return "--engine --config `"$cfg`""
+    }
     $engine = Join-QmWinPath $InstallDir 'QuMeterEngine.ps1'
-    $cfg = Join-QmWinPath $InstallDir 'config.json'
     return "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$engine`" -ConfigPath `"$cfg`""
 }
 
@@ -396,10 +409,14 @@ function New-QmTaskXml {
     param(
         [Parameter(Mandatory)]$Schedule,
         [Parameter(Mandatory)][string]$InstallDir,
+        [string]$DataDir,
         [ValidateSet('CurrentUser','SYSTEM','Account')][string]$RunAs = 'SYSTEM',
         [string]$UserId,
         [datetime]$StartDate = [datetime]::Today
     )
+    if ([string]::IsNullOrWhiteSpace($DataDir)) {
+        $DataDir = if (Test-QmUseDataDir) { Get-QmDataDir } else { $InstallDir }
+    }
     $t = [TimeSpan]::Parse("$($Schedule.time)")
     $start = $StartDate.Date.Add($t).ToString('yyyy-MM-ddTHH:mm:ss')
     switch ("$($Schedule.frequency)") {
@@ -423,11 +440,12 @@ function New-QmTaskXml {
     }
     $desc = "QuMeter Auto $script:QmVersion, published by $script:QmPublisher - reads printer lifetime meters over SNMP and writes dated general / e-automate / MPS CSV files. Installed in $InstallDir."
     if (Test-QmIsPackaged) {
-        $cmd = 'QuMeter.exe'
-        $args = Get-QmEngineArguments -InstallDir $InstallDir
+        # App execution alias survives package version updates; working dir is the writable data dir.
+        $cmd = '%LOCALAPPDATA%\Microsoft\WindowsApps\QuMeter.exe'
+        $args = Get-QmEngineArguments -InstallDir $InstallDir -DataDir $DataDir
     } else {
         $cmd = '%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe'
-        $args = Get-QmEngineArguments -InstallDir $InstallDir
+        $args = Get-QmEngineArguments -InstallDir $InstallDir -DataDir $DataDir
     }
     return @"
 <?xml version="1.0" encoding="UTF-16"?>
@@ -465,7 +483,7 @@ function New-QmTaskXml {
     <Exec>
       <Command>$(ConvertTo-QmXmlText $cmd)</Command>
       <Arguments>$(ConvertTo-QmXmlText $args)</Arguments>
-      <WorkingDirectory>$(ConvertTo-QmXmlText $InstallDir)</WorkingDirectory>
+      <WorkingDirectory>$(ConvertTo-QmXmlText $DataDir)</WorkingDirectory>
     </Exec>
   </Actions>
 </Task>
@@ -490,7 +508,8 @@ function Install-QmLocalTask {
         if (-not $RunAsCredential) { throw 'Run-as account credentials are required.' }
         $user = $RunAsCredential.UserName
     } elseif ($s.runAs -eq 'CurrentUser') { $user = "$env:USERDOMAIN\$env:USERNAME" }
-    $xml = New-QmTaskXml -Schedule $s -InstallDir $AppDir -RunAs $s.runAs -UserId $user
+    $dataDir = if (Test-QmUseDataDir) { Get-QmDataDir } else { $AppDir }
+    $xml = New-QmTaskXml -Schedule $s -InstallDir $AppDir -DataDir $dataDir -RunAs $s.runAs -UserId $user
     if ($s.runAs -eq 'Account') {
         Register-ScheduledTask -Xml $xml -TaskName $s.taskName -User $user -Password $RunAsCredential.GetNetworkCredential().Password -Force | Out-Null
     } else {
