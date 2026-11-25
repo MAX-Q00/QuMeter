@@ -169,6 +169,8 @@ New-QmScaledPng -BaseName 'Square71x71Logo' -BaseW 71 -BaseH 71 -Scales $scales
 New-QmScaledPng -BaseName 'Square150x150Logo' -BaseW 150 -BaseH 150 -Scales $scales
 New-QmScaledPng -BaseName 'Square310x310Logo' -BaseW 310 -BaseH 310 -Scales $scales
 New-QmScaledPng -BaseName 'Wide310x150Logo' -BaseW 310 -BaseH 150 -Scales $scales -Wide $true
+# SplashScreen scale-100 must be 620x300 (not the 150x150 tile logo).
+New-QmScaledPng -BaseName 'SplashScreen' -BaseW 620 -BaseH 300 -Scales $scales -Wide $true
 
 foreach ($ts in @(16, 24, 32, 48, 256)) {
     $o = New-QmBitmap -W $ts -H $ts

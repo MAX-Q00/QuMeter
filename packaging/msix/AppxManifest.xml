@@ -36,7 +36,7 @@
           Square71x71Logo="Assets\Square71x71Logo.png"
           Square310x310Logo="Assets\Square310x310Logo.png"
           ShortName="QuMeter" />
-        <uap:SplashScreen Image="Assets\Square150x150Logo.png" BackgroundColor="#198754" />
+        <uap:SplashScreen Image="Assets\SplashScreen.png" BackgroundColor="#198754" />
       </uap:VisualElements>
       <Extensions>
         <uap5:Extension Category="windows.appExecutionAlias">
