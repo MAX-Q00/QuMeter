@@ -121,6 +121,7 @@ namespace QuSpace.QuMeter
                     ps.AddScript("& '" + EscapePsSingle(scriptPath) + "'");
                 }
 
+                var sw = System.Diagnostics.Stopwatch.StartNew();
                 try
                 {
                     ps.Invoke();
@@ -144,11 +145,6 @@ namespace QuSpace.QuMeter
                 }
 
                 foreach (var err in ps.Streams.Error) Log("PS error: " + err);
-                if (!engine && ps.HadErrors && ps.Streams.Error.Count > 0)
-                {
-                    try { MessageBox.Show("QuMeter could not start:\n\n" + ps.Streams.Error[0], "QuMeter", MessageBoxButtons.OK, MessageBoxIcon.Error); } catch { }
-                    return 1;
-                }
                 if (ps.HadErrors)
                 {
                     foreach (var err in ps.Streams.Error)
@@ -156,6 +152,14 @@ namespace QuSpace.QuMeter
                         ExitException nested = FindExitException(err.Exception);
                         if (nested != null) return GetExitCode(nested);
                     }
+                }
+
+                // GUI mode: Invoke() only returns once the window closes. An error stream within a few seconds of
+                // launch means the script never started (e.g. blocked by policy); later errors came from a normal session.
+                if (!engine && ps.HadErrors && ps.Streams.Error.Count > 0 && sw.ElapsedMilliseconds < 5000)
+                {
+                    try { MessageBox.Show("QuMeter could not start:\n\n" + ps.Streams.Error[0], "QuMeter", MessageBoxButtons.OK, MessageBoxIcon.Error); } catch { }
+                    return 1;
                 }
 
                 // PS 5.1: `exit N` inside an &-invoked script sets $LASTEXITCODE and HadErrors
