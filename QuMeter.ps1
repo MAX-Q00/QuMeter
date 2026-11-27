@@ -94,6 +94,8 @@ function Show-ActiveTabStatus {
 
 $settingsPath = Join-Path $app 'settings.json'
 $mappingPath  = Join-Path $app 'e-automate.mapping.json'
+$mpsImportMappingPath = Join-Path $app 'mps-import.mapping.json'
+$script:QmMpsImportMappingPath = $mpsImportMappingPath
 $configPath   = Join-Path $app 'config.json'
 $psExe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
 
@@ -310,6 +312,8 @@ $grid = New-Object Windows.Forms.DataGridView -Property @{
     MultiSelect = $true; RowHeadersVisible = $false; BackgroundColor = 'White'
     AllowUserToResizeColumns = $true; AllowUserToOrderColumns = $true
     ShowCellToolTips = $true
+    EditMode = 'EditProgrammatically'
+    ClipboardCopyMode = 'Disable'
 }
 $leftTable.Controls.Add($grid, 0, 1)
 
@@ -409,6 +413,8 @@ $tipsBtn = New-B $scanCol '&Tips' 10 118 130 28
 Set-Acc $tipsBtn 'Tips'
 $editMap = New-B $scanCol (Get-QmEditExportMappingButtonText) 6 158 148 28
 Set-Acc $editMap (Get-QmEditExportMappingButtonText)
+$editImportMap = New-B $scanCol (Get-QmEditImportMappingButtonText) 6 188 148 28
+Set-Acc $editImportMap (Get-QmEditImportMappingButtonText)
 $f.AcceptButton = $scan
 
 $initialRemarks = 'Imported by QuMeter'
@@ -462,9 +468,15 @@ $grid.Columns['Error'].AutoSizeMode = 'Fill'
 foreach ($short in @('IP','Status','Serial','Model','Total','Mono','Color','Brand','Asset')) {
     $grid.Columns[$short].AutoSizeMode = 'AllCells'
 }
+foreach ($roCol in (Get-QmGridReadOnlyColumns)) {
+    if ($grid.Columns.Contains($roCol)) { $grid.Columns[$roCol].ReadOnly = $true }
+}
 $grid.Add_CellToolTipTextNeeded({
     if ($_.RowIndex -ge 0 -and $_.ColumnIndex -ge 0) {
-        $_.ToolTipText = [string]$grid.Rows[$_.RowIndex].Cells[$_.ColumnIndex].Value
+        $colName = $grid.Columns[$_.ColumnIndex].Name
+        $roTip = Get-QmGridReadOnlyTooltip $colName
+        if ($roTip) { $_.ToolTipText = $roTip }
+        else { $_.ToolTipText = [string]$grid.Rows[$_.RowIndex].Cells[$_.ColumnIndex].Value }
     }
 })
 Set-Acc $grid 'Scan results'
@@ -736,7 +748,7 @@ $importMps.Add_Click({
     if ($d.ShowDialog() -ne 'OK') { return }
     $script:lastMpsImportFolder = Split-Path -Parent $d.FileName
     try {
-        $imp = Import-QmMpsList -Path $d.FileName
+        $imp = Import-QmMpsList -Path $d.FileName -MappingPath $mpsImportMappingPath
     } catch {
         Msg $_.Exception.Message 'Warning'
         return
@@ -907,12 +919,16 @@ function Start-QmGridSelectionClear {
     $script:gridSelTimer.Start()
 }
 function Show-ManualResults {
+    param([switch]$KeepSelection, $SelectReading = $null, [string]$BeginEditColumn = '')
     $grid.Rows.Clear()
     $responded.Text = Get-QuMeterRespondedIpText -Readings @($script:readings) -ExcludeNoSerial $excludeNoSerial.Checked
     $visible = Get-CurrentReadings
+    $selectIndex = -1
     foreach ($r in $visible) {
         $ipText = $(if ([string]::IsNullOrWhiteSpace($r.Ip)) { 'no IP' } else { $r.Ip })
         $i = $grid.Rows.Add($ipText, $r.Status, $r.Serial, $r.Model, $r.Total, $r.Mono, $r.Color, $r.Customer, $r.Brand, $r.AssetNumber, $r.SystemName, $r.SysDescr, $r.ErrorMessage)
+        $grid.Rows[$i].Tag = $r
+        if ($SelectReading -and [object]::ReferenceEquals($r, $SelectReading)) { $selectIndex = $i }
         if ($r.Status -eq 'Cancelled') { $grid.Rows[$i].DefaultCellStyle.ForeColor = [Drawing.Color]::FromArgb(150, 90, 0) }
         elseif ($r.Status -eq 'No IP' -or [string]::IsNullOrWhiteSpace($r.Ip)) {
             $grid.Rows[$i].DefaultCellStyle.ForeColor = [Drawing.SystemColors]::ControlText
@@ -922,7 +938,19 @@ function Show-ManualResults {
         elseif ($r.Status -eq 'Imported') { $grid.Rows[$i].DefaultCellStyle.ForeColor = [Drawing.SystemColors]::ControlText }
         elseif ($r.Status -ne 'OK') { $grid.Rows[$i].DefaultCellStyle.ForeColor = [Drawing.Color]::Firebrick }
     }
-    Start-QmGridSelectionClear
+    if ($KeepSelection -or $SelectReading) {
+        Clear-QmGridSelection
+        if ($selectIndex -ge 0 -and $selectIndex -lt $grid.Rows.Count) {
+            try {
+                $grid.Rows[$selectIndex].Selected = $true
+                $editCol = $BeginEditColumn
+                if (-not $editCol -or -not $grid.Columns.Contains($editCol)) { $editCol = 'IP' }
+                $grid.CurrentCell = $grid.Rows[$selectIndex].Cells[$editCol]
+            } catch { }
+        }
+    } else {
+        Start-QmGridSelectionClear
+    }
     Update-CopyButton
     Set-ScanProgressVisible $false
     $c = Get-ScanCounts
@@ -1030,7 +1058,402 @@ $copyIps.Add_Click({
 })
 $responded.Add_TextChanged({ Update-CopyButton })
 Update-CopyButton
-$editMap.Add_Click({ Start-Process notepad.exe -ArgumentList "`"$mappingPath`"" })
+$editMap.Add_Click({
+    try {
+        if (-not (Test-Path -LiteralPath $mappingPath)) {
+            Save-EaMapping -Mapping (Get-DefaultEaMapping) -Path $mappingPath
+        }
+        Start-Process notepad.exe -ArgumentList "`"$mappingPath`""
+    } catch { Msg $_.Exception.Message 'Warning' }
+})
+$editImportMap.Add_Click({
+    try {
+        Ensure-MpsImportMappingFile -Path $mpsImportMappingPath | Out-Null
+        Start-Process notepad.exe -ArgumentList "`"$mpsImportMappingPath`""
+    } catch { Msg $_.Exception.Message 'Warning' }
+})
+
+# --- Results grid: context menu, in-place edit, selection helpers ---
+$script:gridEditBusy = $false
+$script:gridEditOldIp = ''
+$script:gridMenuBusy = $false
+function Get-GridSelectedReadings {
+    $list = New-Object System.Collections.Generic.List[object]
+    foreach ($row in @($grid.SelectedRows)) {
+        if ($row.Tag) { [void]$list.Add($row.Tag) }
+    }
+    if ($list.Count -eq 0 -and $grid.CurrentCell -and $grid.CurrentCell.OwningRow -and $grid.CurrentCell.OwningRow.Tag) {
+        [void]$list.Add($grid.CurrentCell.OwningRow.Tag)
+    }
+    return ,$list
+}
+function Sync-ReadingToMpsImport($Reading, [string]$OldIp) {
+    if (-not $script:mpsImport -or -not $script:mpsImport.Rows) { return }
+    $match = $null
+    foreach ($row in @($script:mpsImport.Rows)) {
+        if ($OldIp -and [string]$row.Ip -eq $OldIp) { $match = $row; break }
+    }
+    if (-not $match -and $Reading.Ip) {
+        foreach ($row in @($script:mpsImport.Rows)) {
+            if ([string]$row.Ip -eq [string]$Reading.Ip) { $match = $row; break }
+        }
+    }
+    if (-not $match) { return }
+    $match.Ip = [string]$Reading.Ip
+    $match.HasIp = -not [string]::IsNullOrWhiteSpace([string]$Reading.Ip)
+    $match.IpRaw = [string]$Reading.Ip
+    $match.Serial = [string]$Reading.Serial
+    $match.Model = [string]$Reading.Model
+    $match.Total = [string]$Reading.Total
+    $match.Mono = [string]$Reading.Mono
+    $match.Color = [string]$Reading.Color
+    $match.Customer = [string]$Reading.Customer
+    $match.Brand = [string]$Reading.Brand
+    $match.AssetNumber = [string]$Reading.AssetNumber
+    $match.SystemName = [string]$Reading.SystemName
+    try { Save-QmMpsImport -Import $script:mpsImport -Path $script:mpsImportPath -SelectedCustomer $script:mpsSelectedCustomer } catch { }
+}
+function Apply-GridCellToReading {
+    param($Reading, [string]$ColumnName, [string]$Value)
+    $check = Test-QmGridCellEditValue -ColumnName $ColumnName -Value $Value
+    if (-not $check.Ok) { return $check }
+    $prop = Get-QmGridColumnReadingProperty $ColumnName
+    $oldIp = [string]$Reading.Ip
+    $Reading.$prop = [string]$check.Normalized
+    if ($ColumnName -eq 'IP') {
+        if ([string]::IsNullOrWhiteSpace($Reading.Ip)) {
+            if ($Reading.Status -eq 'Imported' -or $Reading.Status -eq 'No IP' -or [string]::IsNullOrWhiteSpace($Reading.Status)) {
+                $Reading.Status = 'No IP'
+                if ([string]::IsNullOrWhiteSpace($Reading.ErrorMessage)) { $Reading.ErrorMessage = 'No IP in the list' }
+            }
+        } elseif ($Reading.Status -eq 'No IP') {
+            $Reading.Status = 'Imported'
+            $Reading.ErrorMessage = ''
+        }
+    }
+    if ($ColumnName -eq 'System' -and [string]::IsNullOrWhiteSpace($Reading.SysDescr)) {
+        $Reading.SysDescr = [string]$Reading.SystemName
+    }
+    Sync-ReadingToMpsImport $Reading $oldIp
+    if ($script:lastScanReadings) {
+        $script:lastScanReadings = @(ConvertTo-QmFlatList $script:lastScanReadings)
+    }
+    return $check
+}
+function Start-GridCellEdit([int]$RowIndex, [int]$ColumnIndex) {
+    if ($script:gridEditBusy) { return }
+    if ($script:scanJob) { return }
+    if ($RowIndex -lt 0 -or $ColumnIndex -lt 0) { return }
+    $col = $grid.Columns[$ColumnIndex]
+    if (-not $col) { return }
+    if (-not (Test-QmGridColumnEditable $col.Name)) {
+        $tip = Get-QmGridReadOnlyTooltip $col.Name
+        if (-not $tip) { $tip = "$($col.Name) cannot be edited." }
+        Set-AppStatus $tip ([Drawing.Color]::FromArgb(150, 90, 0))
+        return
+    }
+    $row = $grid.Rows[$RowIndex]
+    if (-not $row -or -not $row.Tag) { return }
+    try {
+        $script:gridEditBusy = $true
+        $script:gridEditOldIp = [string]$row.Tag.Ip
+        $grid.ReadOnly = $false
+        foreach ($c in @($grid.Columns)) {
+            $c.ReadOnly = -not (Test-QmGridColumnEditable $c.Name)
+        }
+        $grid.CurrentCell = $row.Cells[$ColumnIndex]
+        [void]$grid.BeginEdit($true)
+    } catch {
+        $grid.ReadOnly = $true
+        $script:gridEditBusy = $false
+        Msg $_.Exception.Message 'Warning'
+    }
+}
+function End-GridEditMode {
+    try { if ($grid.IsCurrentCellInEditMode) { [void]$grid.EndEdit() } } catch { }
+    $grid.ReadOnly = $true
+    foreach ($c in @($grid.Columns)) { $c.ReadOnly = $true }
+    foreach ($roCol in (Get-QmGridReadOnlyColumns)) {
+        if ($grid.Columns.Contains($roCol)) { $grid.Columns[$roCol].ReadOnly = $true }
+    }
+    $script:gridEditBusy = $false
+}
+function Invoke-GridAddEntry {
+    if ($script:scanJob) { return }
+    $r = New-Object QuMeterSnmp.PrinterReading
+    $r.Status = 'Imported'
+    $r.Ip = ''
+    [void]$script:readings.Add($r)
+    if (-not $script:listSource) { $script:listSource = 'import' }
+    Show-ManualResults -SelectReading $r -BeginEditColumn 'IP'
+    try { Start-GridCellEdit $grid.CurrentCell.RowIndex $grid.CurrentCell.ColumnIndex } catch { }
+    Set-AppStatus 'Added a blank entry. Edit the IP and other fields, then Scan or Export.'
+}
+function Invoke-GridDeleteSelected {
+    if ($script:scanJob) { return }
+    $selected = @(Get-GridSelectedReadings)
+    if ($selected.Count -eq 0) { Msg 'Select one or more rows to delete.'; return }
+    $label = if ($selected.Count -eq 1) {
+        $ip = [string]$selected[0].Ip
+        if ([string]::IsNullOrWhiteSpace($ip)) { 'this entry with no IP' } else { "the entry for $ip" }
+    } else { "$($selected.Count) selected entries" }
+    if (-not (Ask "Delete $label from the results list?")) { return }
+    $keep = New-Object System.Collections.Generic.List[QuMeterSnmp.PrinterReading]
+    foreach ($r in @($script:readings)) {
+        $drop = $false
+        foreach ($s in $selected) {
+            if ([object]::ReferenceEquals($r, $s)) { $drop = $true; break }
+        }
+        if (-not $drop) { [void]$keep.Add($r) }
+    }
+    $script:readings.Clear()
+    Add-QmReadingsToList -List $script:readings -Items $keep
+    if ($script:mpsImport -and $script:mpsImport.Rows) {
+        $ips = @{}
+        foreach ($s in $selected) {
+            if ($s.Ip) { $ips[[string]$s.Ip] = $true }
+        }
+        if ($ips.Count -gt 0) {
+            $script:mpsImport.Rows = @($script:mpsImport.Rows | Where-Object { -not ($_.HasIp -and $ips.ContainsKey([string]$_.Ip)) })
+            try { Save-QmMpsImport -Import $script:mpsImport -Path $script:mpsImportPath -SelectedCustomer $script:mpsSelectedCustomer } catch { }
+        }
+    }
+    Show-ManualResults
+    Set-AppStatus "Deleted $($selected.Count) entr$(if ($selected.Count -eq 1) { 'y' } else { 'ies' })."
+}
+function Invoke-GridCopyCell {
+    try {
+        if (-not $grid.CurrentCell) { return }
+        $v = [string]$grid.CurrentCell.Value
+        if ($null -eq $v) { $v = '' }
+        [Windows.Forms.Clipboard]::SetText($v)
+        Set-AppStatus 'Copied cell.'
+    } catch { Msg $_.Exception.Message 'Warning' }
+}
+function Invoke-GridCopyRows([switch]$IncludeHeader) {
+    try {
+        $selected = @(Get-GridSelectedReadings)
+        if ($selected.Count -eq 0) { Msg 'Select one or more rows to copy.'; return }
+        $tsv = ConvertTo-QmGridTsv -Rows $selected -Columns (Get-QmManualGridColumnOrder) -IncludeHeader:$IncludeHeader
+        [Windows.Forms.Clipboard]::SetText($tsv)
+        Set-AppStatus "Copied $($selected.Count) row(s)."
+    } catch { Msg $_.Exception.Message 'Warning' }
+}
+function Invoke-GridPasteCell {
+    if ($script:scanJob) { return }
+    try {
+        if (-not $grid.CurrentCell) { return }
+        $col = $grid.Columns[$grid.CurrentCell.ColumnIndex]
+        if (-not (Test-QmGridColumnEditable $col.Name)) {
+            Set-AppStatus (Get-QmGridReadOnlyTooltip $col.Name) ([Drawing.Color]::FromArgb(150, 90, 0))
+            return
+        }
+        if (-not [Windows.Forms.Clipboard]::ContainsText()) { return }
+        $text = [Windows.Forms.Clipboard]::GetText()
+        if ($null -eq $text) { return }
+        $first = (($text -split '\r?\n')[0] -split "`t")[0]
+        $row = $grid.CurrentCell.OwningRow
+        if (-not $row.Tag) { return }
+        $check = Apply-GridCellToReading -Reading $row.Tag -ColumnName $col.Name -Value $first
+        if (-not $check.Ok) { Msg $check.Message 'Warning'; return }
+        $display = [string]$check.Normalized
+        if ($col.Name -eq 'IP' -and [string]::IsNullOrWhiteSpace($display)) { $display = 'no IP' }
+        $row.Cells[$col.Name].Value = $display
+        Set-AppStatus "Pasted into $($col.Name)."
+        Update-ExportButtons
+    } catch { Msg $_.Exception.Message 'Warning' }
+}
+function Invoke-GridRescanSelected {
+    if ($script:scanJob) { return }
+    $selected = @(Get-GridSelectedReadings)
+    $ips = @($selected | ForEach-Object { [string]$_.Ip } | Where-Object { Test-QmIpv4Address $_ } | Select-Object -Unique)
+    if ($ips.Count -eq 0) { Msg 'Select one or more rows with a valid IP to rescan.'; return }
+    Set-TargetText ($ips -join "`r`n")
+    $script:updatingCustomerFilter = $true
+    try {
+        $script:mpsSelectedCustomer = Get-QmMpsIpSearchLabel
+        $idx = $customerFilter.Items.IndexOf((Get-QmMpsIpSearchLabel))
+        if ($idx -ge 0) { $customerFilter.SelectedIndex = $idx }
+    } finally { $script:updatingCustomerFilter = $false }
+    Persist
+    $scan.PerformClick()
+}
+function Invoke-GridOpenWebPage {
+    try {
+        $selected = @(Get-GridSelectedReadings)
+        if ($selected.Count -eq 0) { Msg 'Select a row with an IP first.'; return }
+        $opened = 0
+        foreach ($r in $selected) {
+            if (-not (Test-QmIpv4Address $r.Ip)) { continue }
+            Start-Process ("http://{0}" -f $r.Ip) | Out-Null
+            $opened++
+            if ($opened -ge 5) { break }
+        }
+        if ($opened -eq 0) { Msg 'Selected rows do not have a valid IP.' }
+        else { Set-AppStatus "Opened $opened device web page(s)." }
+    } catch { Msg $_.Exception.Message 'Warning' }
+}
+function Invoke-GridExportSelected {
+    try {
+        $selected = @(Get-GridSelectedReadings)
+        if ($selected.Count -eq 0) { Msg 'Select one or more rows to export.'; return }
+        if (-not (Confirm-ExportPartialScan)) { return }
+        $path = Prompt-Save 'Export selected rows CSV' 'CSV (*.csv)|*.csv' ("QuMeter_selected_{0}.csv" -f (Get-Date -Format 'yyyyMMdd_HHmmss'))
+        if ($path) {
+            Export-QuMeterGeneralCsv -Readings $selected -Path $path
+            Set-AppStatus "Saved $path"
+        }
+    } catch { Msg $_.Exception.Message 'Warning' }
+}
+
+$gridMenu = New-Object Windows.Forms.ContextMenuStrip
+$miAdd = $gridMenu.Items.Add('Add entry')
+$miEdit = $gridMenu.Items.Add('Edit entry')
+$miDelete = $gridMenu.Items.Add('Delete entry')
+[void]$gridMenu.Items.Add((New-Object Windows.Forms.ToolStripSeparator))
+$miCopyCell = $gridMenu.Items.Add('Copy (cell)')
+$miCopyRows = $gridMenu.Items.Add('Copy row(s)')
+$miCopyRowsHdr = $gridMenu.Items.Add('Copy row(s) with header')
+$miSelectAll = $gridMenu.Items.Add('Select All')
+$miPaste = $gridMenu.Items.Add('Paste into cell')
+[void]$gridMenu.Items.Add((New-Object Windows.Forms.ToolStripSeparator))
+$miRescan = $gridMenu.Items.Add('Rescan selected IP(s)')
+$miOpenWeb = $gridMenu.Items.Add('Open device web page')
+$miExportSel = $gridMenu.Items.Add('Export selected rows')
+[void]$gridMenu.Items.Add((New-Object Windows.Forms.ToolStripSeparator))
+$miHideTo = New-Object Windows.Forms.ToolStripMenuItem
+$miHideTo.Text = 'Hide timed-out devices'
+$miHideTo.CheckOnClick = $true
+[void]$gridMenu.Items.Add($miHideTo)
+$miHideSerial = New-Object Windows.Forms.ToolStripMenuItem
+$miHideSerial.Text = 'Only devices with serial numbers'
+$miHideSerial.CheckOnClick = $true
+[void]$gridMenu.Items.Add($miHideSerial)
+$grid.ContextMenuStrip = $gridMenu
+
+$gridMenu.Add_Opening({
+    if ($script:gridMenuBusy) { $_.Cancel = $true; return }
+    try {
+        $scanning = [bool]$script:scanJob
+        $sel = @(Get-GridSelectedReadings)
+        $hasSel = $sel.Count -gt 0
+        $hasIp = @($sel | Where-Object { Test-QmIpv4Address $_.Ip }).Count -gt 0
+        $miAdd.Enabled = -not $scanning
+        $miEdit.Enabled = (-not $scanning) -and $hasSel -and $grid.CurrentCell -and (Test-QmGridColumnEditable $grid.Columns[$grid.CurrentCell.ColumnIndex].Name)
+        $miDelete.Enabled = (-not $scanning) -and $hasSel
+        $miCopyCell.Enabled = [bool]$grid.CurrentCell
+        $miCopyRows.Enabled = $hasSel
+        $miCopyRowsHdr.Enabled = $hasSel
+        $miSelectAll.Enabled = $grid.Rows.Count -gt 0
+        $miPaste.Enabled = (-not $scanning) -and $grid.CurrentCell -and (Test-QmGridColumnEditable $grid.Columns[$grid.CurrentCell.ColumnIndex].Name) -and [Windows.Forms.Clipboard]::ContainsText()
+        $miRescan.Enabled = (-not $scanning) -and $hasIp
+        $miOpenWeb.Enabled = $hasIp
+        $miExportSel.Enabled = $hasSel
+        $miHideTo.Checked = [bool]$excludeTo.Checked
+        $miHideSerial.Checked = [bool]$excludeNoSerial.Checked
+        $miHideTo.Enabled = -not $scanning
+        $miHideSerial.Enabled = -not $scanning
+    } catch { }
+})
+$miAdd.Add_Click({ try { Invoke-GridAddEntry } catch { Msg $_.Exception.Message 'Warning' } })
+$miEdit.Add_Click({
+    try {
+        if ($grid.CurrentCell) { Start-GridCellEdit $grid.CurrentCell.RowIndex $grid.CurrentCell.ColumnIndex }
+    } catch { Msg $_.Exception.Message 'Warning' }
+})
+$miDelete.Add_Click({ try { Invoke-GridDeleteSelected } catch { Msg $_.Exception.Message 'Warning' } })
+$miCopyCell.Add_Click({ Invoke-GridCopyCell })
+$miCopyRows.Add_Click({ Invoke-GridCopyRows })
+$miCopyRowsHdr.Add_Click({ Invoke-GridCopyRows -IncludeHeader })
+$miSelectAll.Add_Click({ try { $grid.SelectAll() } catch { } })
+$miPaste.Add_Click({ Invoke-GridPasteCell })
+$miRescan.Add_Click({ try { Invoke-GridRescanSelected } catch { Msg $_.Exception.Message 'Warning' } })
+$miOpenWeb.Add_Click({ Invoke-GridOpenWebPage })
+$miExportSel.Add_Click({ Invoke-GridExportSelected })
+$miHideTo.Add_Click({
+    try {
+        if ($excludeTo.Checked -ne $miHideTo.Checked) { $excludeTo.Checked = $miHideTo.Checked }
+    } catch { Msg $_.Exception.Message 'Warning' }
+})
+$miHideSerial.Add_Click({
+    try {
+        if ($excludeNoSerial.Checked -ne $miHideSerial.Checked) { $excludeNoSerial.Checked = $miHideSerial.Checked }
+    } catch { Msg $_.Exception.Message 'Warning' }
+})
+
+$grid.Add_CellMouseDown({
+    try {
+        if ($_.Button -ne [Windows.Forms.MouseButtons]::Right) { return }
+        if ($_.RowIndex -lt 0) { return }
+        if (-not $grid.Rows[$_.RowIndex].Selected) {
+            $grid.ClearSelection()
+            $grid.Rows[$_.RowIndex].Selected = $true
+        }
+        if ($_.ColumnIndex -ge 0) {
+            $grid.CurrentCell = $grid.Rows[$_.RowIndex].Cells[$_.ColumnIndex]
+        }
+    } catch { }
+})
+$grid.Add_CellDoubleClick({
+    try {
+        if ($_.RowIndex -lt 0 -or $_.ColumnIndex -lt 0) { return }
+        Start-GridCellEdit $_.RowIndex $_.ColumnIndex
+    } catch { Msg $_.Exception.Message 'Warning' }
+})
+$grid.Add_CellValidating({
+    if (-not $script:gridEditBusy) { return }
+    try {
+        $col = $grid.Columns[$_.ColumnIndex]
+        $row = $grid.Rows[$_.RowIndex]
+        if (-not $row.Tag -or -not $col) { return }
+        $proposed = [string]$_.FormattedValue
+        $check = Test-QmGridCellEditValue -ColumnName $col.Name -Value $proposed
+        if (-not $check.Ok) {
+            $_.Cancel = $true
+            Msg $check.Message 'Warning'
+        }
+    } catch {
+        $_.Cancel = $true
+        Msg $_.Exception.Message 'Warning'
+    }
+})
+$grid.Add_CellEndEdit({
+    try {
+        $col = $grid.Columns[$_.ColumnIndex]
+        $row = $grid.Rows[$_.RowIndex]
+        if ($row.Tag -and $col) {
+            $val = [string]$row.Cells[$_.ColumnIndex].Value
+            $check = Apply-GridCellToReading -Reading $row.Tag -ColumnName $col.Name -Value $val
+            if ($check.Ok) {
+                $display = [string]$check.Normalized
+                if ($col.Name -eq 'IP' -and [string]::IsNullOrWhiteSpace($display)) { $display = 'no IP' }
+                $row.Cells[$_.ColumnIndex].Value = $display
+                if ($col.Name -eq 'IP') { $row.Cells['Status'].Value = $row.Tag.Status }
+                Set-AppStatus "Updated $($col.Name)."
+                Update-ExportButtons
+            }
+        }
+    } catch { Msg $_.Exception.Message 'Warning' }
+    finally { End-GridEditMode }
+})
+$grid.Add_KeyDown({
+    try {
+        if ($_.KeyCode -eq 'Escape' -and $grid.IsCurrentCellInEditMode) {
+            $grid.CancelEdit()
+            End-GridEditMode
+            $_.Handled = $true
+            return
+        }
+        if ($_.Control -and $_.KeyCode -eq 'C') {
+            if ($grid.SelectedCells.Count -eq 1) { Invoke-GridCopyCell } else { Invoke-GridCopyRows }
+            $_.Handled = $true
+        }
+        elseif ($_.Control -and $_.KeyCode -eq 'V') { Invoke-GridPasteCell; $_.Handled = $true }
+        elseif ($_.Control -and $_.KeyCode -eq 'A') { $grid.SelectAll(); $_.Handled = $true }
+        elseif ($_.KeyCode -eq 'Delete' -and -not $grid.IsCurrentCellInEditMode) { Invoke-GridDeleteSelected; $_.Handled = $true }
+    } catch { Msg $_.Exception.Message 'Warning' }
+})
+
 $exportCsv.Add_Click({
     $list = Get-CurrentReadings
     if (-not $list -or $list.Count -eq 0) {

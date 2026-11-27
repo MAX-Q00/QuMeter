@@ -9,7 +9,7 @@ $script:QmUpdateDownloadTimeoutMs = 60000
 
 function Get-QmAppPayloadFiles {
     # Files the updater replaces. User data (settings.json, config.json, devices.txt, mps-import.json, output, logs) is left alone.
-    # e-automate.mapping.json is only copied when the install does not already have one.
+    # e-automate.mapping.json and mps-import.mapping.json are only copied when the install does not already have one.
     @('QuMeter.bat', 'QuMeter.ps1', 'QuMeterCore.ps1', 'QuMeterEngine.ps1', 'QuMeterUpdate.ps1', 'QuSnmp.cs', 'QuSnmp.ps1', 'README.md')
 }
 
@@ -242,6 +242,11 @@ function Install-QmUpdateFiles {
     $mapTo = Join-Path $AppDir 'e-automate.mapping.json'
     if ((Test-Path -LiteralPath $mapFrom) -and -not (Test-Path -LiteralPath $mapTo)) {
         Copy-Item -LiteralPath $mapFrom -Destination $mapTo -Force
+    }
+    $impMapFrom = Join-Path $root 'mps-import.mapping.json'
+    $impMapTo = Join-Path $AppDir 'mps-import.mapping.json'
+    if ((Test-Path -LiteralPath $impMapFrom) -and -not (Test-Path -LiteralPath $impMapTo)) {
+        Copy-Item -LiteralPath $impMapFrom -Destination $impMapTo -Force
     }
     return $root
 }

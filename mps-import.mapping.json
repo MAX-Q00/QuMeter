@@ -1,0 +1,158 @@
+﻿{
+    "fields":  {
+                   "CustomerCode":  [
+                                        "customer code",
+                                        "customercode",
+                                        "cust code",
+                                        "account code",
+                                        "customer id",
+                                        "account id",
+                                        "cust id",
+                                        "customer no",
+                                        "customer number",
+                                        "account number"
+                                    ],
+                   "Office":  [
+                                  "office",
+                                  "location",
+                                  "site",
+                                  "branch",
+                                  "office name"
+                              ],
+                   "Model":  [
+                                 "model",
+                                 "model name",
+                                 "modelname",
+                                 "product",
+                                 "product name",
+                                 "productname"
+                             ],
+                   "Contact":  [
+                                   "contact",
+                                   "contact name",
+                                   "contactname"
+                               ],
+                   "DaysStale":  [
+                                     "days stale",
+                                     "daysstale",
+                                     "stale days",
+                                     "days since update",
+                                     "days since last update"
+                                 ],
+                   "Serial":  [
+                                  "serialnumber",
+                                  "serial number",
+                                  "serial",
+                                  "serial no",
+                                  "serialno",
+                                  "serial num",
+                                  "serialnum",
+                                  "s n",
+                                  "sn"
+                              ],
+                   "AssetNumber":  [
+                                       "assetnumber",
+                                       "asset number",
+                                       "asset",
+                                       "asset no",
+                                       "assetno",
+                                       "equipment number",
+                                       "equipment no",
+                                       "equip no",
+                                       "equipmentnumber",
+                                       "equip number"
+                                   ],
+                   "Brand":  [
+                                 "brand",
+                                 "manufacturer",
+                                 "make",
+                                 "vendor",
+                                 "mfr",
+                                 "mfg"
+                             ],
+                   "Mono":  [
+                                "mono count",
+                                "monocount",
+                                "mono pages",
+                                "monopages",
+                                "mono",
+                                "bw",
+                                "b w",
+                                "black",
+                                "black white"
+                            ],
+                   "Color":  [
+                                 "color count",
+                                 "colorcount",
+                                 "color pages",
+                                 "colorpages",
+                                 "color",
+                                 "colour",
+                                 "colour count"
+                             ],
+                   "SystemName":  [
+                                      "sytem name",
+                                      "system name",
+                                      "systemname",
+                                      "hostname",
+                                      "host name",
+                                      "sysname",
+                                      "device name",
+                                      "devicename",
+                                      "dns name",
+                                      "computer name",
+                                      "host"
+                                  ],
+                   "Customer":  [
+                                    "customer description",
+                                    "customer",
+                                    "customer name",
+                                    "customer desc",
+                                    "account",
+                                    "account name",
+                                    "customername",
+                                    "company",
+                                    "company name",
+                                    "client",
+                                    "client name",
+                                    "site customer"
+                                ],
+                   "Department":  [
+                                      "department",
+                                      "dept",
+                                      "department name"
+                                  ],
+                   "LastUpdate":  [
+                                      "last update",
+                                      "last updated",
+                                      "lastupdated",
+                                      "last seen",
+                                      "lastseen",
+                                      "updated",
+                                      "date updated",
+                                      "last meter date"
+                                  ],
+                   "Ip":  [
+                              "ip address",
+                              "ipaddress",
+                              "ip",
+                              "ip addr",
+                              "ipv4",
+                              "host ip",
+                              "printer ip",
+                              "ipaddressv4",
+                              "tcp ip address",
+                              "tcpip address"
+                          ],
+                   "Total":  [
+                                 "total count",
+                                 "totalcount",
+                                 "total pages",
+                                 "totalpages",
+                                 "total",
+                                 "lifetime",
+                                 "lifetime total"
+                             ]
+               },
+    "notes":  "Header aliases for Import list (MPS). Each field lists alternate column titles QuMeter accepts. Edit aliases to match your fleet-report headers, then re-import."
+}

@@ -12,12 +12,13 @@ if (Test-Path $tmp) { Remove-Item $tmp -Recurse -Force }
 New-Item -ItemType Directory -Path $tmp -Force | Out-Null
 
 Write-Host '=== Version source of truth ==='
-Assert-Eq (Get-QmVersion) '2.2.4' 'Get-QmVersion reads $script:QmVersion'
+Assert-Eq (Get-QmVersion) '2.2.5' 'Get-QmVersion reads $script:QmVersion'
 Assert-Eq (Get-QmPublisher) 'QuSpace Studios LLC' 'publisher constant'
 Assert-Eq (Get-QmProductName) 'QuMeter' 'product name'
 Assert-True ((Get-QmCopyrightText -Ascii) -match 'QuSpace Studios LLC') 'ASCII copyright mentions publisher'
 Assert-True ((Get-QmFeedbackMailto) -match 'mailto:dylan@quspace.studio') 'feedback mailto uses studio email'
-Assert-True ((Get-QmFeedbackMailto) -match 'QuMeter%20feedback%20%28v2\.2\.4%29') 'mailto subject includes version'
+$mail = Get-QmFeedbackMailto
+Assert-True ($mail -match 'QuMeter(%20|\s)feedback' -and $mail -match 'v2\.2\.5') 'mailto subject includes version'
 Assert-Eq (Get-QmFeedbackIssuesUrl) 'https://github.com/MAX-Q00/QuMeter/issues/new' 'GitHub issues URL'
 
 Write-Host '=== Version compare and asset names ==='

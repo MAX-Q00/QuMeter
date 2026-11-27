@@ -21,7 +21,7 @@ if (Test-Path -LiteralPath $zipPath) { Remove-Item -LiteralPath $zipPath -Force 
 $stage = Join-Path ([IO.Path]::GetTempPath()) ('QuMeter-pack-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $stage -Force | Out-Null
 try {
-    $files = @(Get-QmAppPayloadFiles) + @('e-automate.mapping.json', '.gitignore')
+    $files = @(Get-QmAppPayloadFiles) + @('e-automate.mapping.json', 'mps-import.mapping.json', '.gitignore')
     foreach ($f in $files) {
         $src = Join-Path $root $f
         if (Test-Path -LiteralPath $src) { Copy-Item -LiteralPath $src -Destination (Join-Path $stage $f) -Force }
