@@ -14,7 +14,7 @@ if (-not $root) { $root = (Get-Location).Path }
 
 $version = Get-QmVersion
 $pkgVersion = "$version.0"
-if ($pkgVersion -notmatch '^\d+\.\d+\.\d+\.\d+$') { $pkgVersion = '2.2.4.0' }
+if ($pkgVersion -notmatch '^\d+\.\d+\.\d+\.\d+$') { $pkgVersion = '2.2.5.0' }
 $msixName = "QuMeter_${pkgVersion}_x64.msix"
 $msixPath = Join-Path $OutDir $msixName
 

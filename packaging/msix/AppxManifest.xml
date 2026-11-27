@@ -9,7 +9,7 @@
   <Identity
     Name="QuSpaceStudios.QuMeter"
     Publisher="CN=07F78184-E899-45D0-891F-DD7809CD5504"
-    Version="2.2.4.0"
+    Version="2.2.5.0"
     ProcessorArchitecture="x64" />
   <Properties>
     <DisplayName>QuMeter</DisplayName>
