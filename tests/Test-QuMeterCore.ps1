@@ -521,6 +521,126 @@ $atomicRead = Get-Content -LiteralPath $atomicPath -Raw -Encoding UTF8
 Assert-True ($atomicRead -match 'excludeNoSerial') 'atomic settings save overwrites in place and stays readable'
 Remove-Item -LiteralPath $atomicDir -Recurse -Force -ErrorAction SilentlyContinue
 
+Write-Host '=== Data dir / packaged helpers ==='
+$dataTmp = Join-Path $tmp 'datadir'
+New-Item -ItemType Directory -Path $dataTmp -Force | Out-Null
+$prevData = $env:QUMETER_DATA_DIR
+$prevForce = $env:QUMETER_FORCE_PACKAGED
+try {
+    $env:QUMETER_DATA_DIR = $dataTmp
+    $env:QUMETER_FORCE_PACKAGED = '0'
+    $script:QmPackageProbeDone = $false
+    Assert-Eq (Get-QmDataDir) $dataTmp 'QUMETER_DATA_DIR override'
+    Assert-True (Test-QmUseDataDir) 'data dir forced by env'
+    Assert-True (-not (Test-QmIsPackaged)) 'force unpackaged'
+
+    $legacy = Join-Path $tmp 'legacy-user'
+    New-Item -ItemType Directory -Path $legacy -Force | Out-Null
+    '{"community":"legacy"}' | Set-Content (Join-Path $legacy 'settings.json') -Encoding UTF8
+    '{"targets":["10.0.0.1"]}' | Set-Content (Join-Path $legacy 'config.json') -Encoding UTF8
+    '{"format":"advanced","source":"CUSTOM-LEGACY"}' | Set-Content (Join-Path $legacy 'e-automate.mapping.json') -Encoding UTF8
+    $migData = Join-Path $tmp 'mig-data'
+    if (Test-Path $migData) { Remove-Item $migData -Recurse -Force }
+    New-Item -ItemType Directory -Path $migData -Force | Out-Null
+    $env:QUMETER_DATA_DIR = $migData
+    $seedApp = Join-Path $tmp 'seed-app'
+    New-Item -ItemType Directory -Path $seedApp -Force | Out-Null
+    '{"format":"basic","source":"PACKAGE-DEFAULT"}' | Set-Content (Join-Path $seedApp 'e-automate.mapping.json') -Encoding UTF8
+    $null = Initialize-QmDataDir -AppDir $seedApp -DataDir $migData -LegacyRoots @($legacy)
+    Assert-True (Test-Path (Join-Path $migData 'e-automate.mapping.json')) 'mapping exists in data dir after init'
+    Assert-True ((Get-Content (Join-Path $migData 'e-automate.mapping.json') -Raw -Encoding UTF8) -match 'CUSTOM-LEGACY') 'preserves legacy customized mapping over package default'
+    Assert-True ((Get-Content (Join-Path $migData 'e-automate.mapping.json') -Raw -Encoding UTF8) -notmatch 'PACKAGE-DEFAULT') 'package default mapping does not shadow legacy mapping'
+    Assert-True ((Get-Content (Join-Path $migData 'settings.json') -Raw -Encoding UTF8) -match 'legacy') 'migrated settings'
+    'already' | Set-Content (Join-Path $migData 'settings.json') -Encoding UTF8
+    $null = Initialize-QmDataDir -AppDir $seedApp -DataDir $migData -LegacyRoots @($legacy)
+    Assert-True ((Get-Content (Join-Path $migData 'settings.json') -Raw -Encoding UTF8) -match 'already') 'migration does not overwrite existing data files'
+
+    # No legacy mapping: seed package default
+    $migData2 = Join-Path $tmp 'mig-data-seed'
+    if (Test-Path $migData2) { Remove-Item $migData2 -Recurse -Force }
+    New-Item -ItemType Directory -Path $migData2 -Force | Out-Null
+    $legacyEmpty = Join-Path $tmp 'legacy-empty'
+    New-Item -ItemType Directory -Path $legacyEmpty -Force | Out-Null
+    $env:QUMETER_DATA_DIR = $migData2
+    $null = Initialize-QmDataDir -AppDir $seedApp -DataDir $migData2 -LegacyRoots @($legacyEmpty)
+    Assert-True ((Get-Content (Join-Path $migData2 'e-automate.mapping.json') -Raw -Encoding UTF8) -match 'PACKAGE-DEFAULT') 'seeds package mapping when no legacy mapping exists'
+
+    # Omitting -LegacyRoots must discover roots as individual string paths (not a nested List).
+    $discovered = @(Get-QmLegacyDataRoots)
+    foreach ($dr in $discovered) {
+        Assert-True ($dr -is [string]) 'Get-QmLegacyDataRoots yields string paths'
+        Assert-True ([System.IO.Path]::IsPathRooted($dr)) 'discovered legacy root is rooted'
+    }
+    $autoMig = Join-Path $tmp 'auto-mig-data'
+    if (Test-Path $autoMig) { Remove-Item $autoMig -Recurse -Force }
+    New-Item -ItemType Directory -Path $autoMig -Force | Out-Null
+    $discoveredLegacy = Join-Path $env:USERPROFILE 'QuMeterAuto'
+    $createdDiscovered = $false
+    $wroteDiscoveredMarker = $false
+    $prevDiscoveredMarker = $null
+    $markerName = 'mps-import.json'
+    try {
+        if (-not (Test-Path -LiteralPath $discoveredLegacy)) {
+            New-Item -ItemType Directory -Path $discoveredLegacy -Force | Out-Null
+            $createdDiscovered = $true
+        }
+        # Use mps-import.json so an existing %USERPROFILE%\QuMeter\settings.json cannot shadow this marker.
+        $discMarker = Join-Path $discoveredLegacy $markerName
+        if (Test-Path -LiteralPath $discMarker) {
+            $prevDiscoveredMarker = Get-Content -LiteralPath $discMarker -Raw -Encoding UTF8
+        } else {
+            $wroteDiscoveredMarker = $true
+        }
+        '{"marker":"auto-legacy-mps"}' | Set-Content -LiteralPath $discMarker -Encoding UTF8
+        $env:QUMETER_DATA_DIR = $autoMig
+        # Intentionally omit -LegacyRoots so Initialize must call Get-QmLegacyDataRoots.
+        $null = Initialize-QmDataDir -AppDir $seedApp -DataDir $autoMig
+        Assert-True (Test-Path (Join-Path $autoMig $markerName)) 'omitted LegacyRoots still migrates via discovery'
+        Assert-True ((Get-Content (Join-Path $autoMig $markerName) -Raw -Encoding UTF8) -match 'auto-legacy-mps') 'discovered legacy marker migrated'
+    } finally {
+        $discMarker = Join-Path $discoveredLegacy $markerName
+        if ($wroteDiscoveredMarker -and (Test-Path -LiteralPath $discMarker)) {
+            Remove-Item -LiteralPath $discMarker -Force -ErrorAction SilentlyContinue
+        } elseif ($null -ne $prevDiscoveredMarker) {
+            Set-Content -LiteralPath $discMarker -Value $prevDiscoveredMarker -Encoding UTF8
+        }
+        if ($createdDiscovered -and (Test-Path -LiteralPath $discoveredLegacy)) {
+            Remove-Item -LiteralPath $discoveredLegacy -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    $env:QUMETER_FORCE_PACKAGED = '0'
+    $script:QmPackageProbeDone = $false
+    $roData = Join-Path $tmp 'ro-data'
+    New-Item -ItemType Directory -Path $roData -Force | Out-Null
+    $env:QUMETER_DATA_DIR = $roData
+    $roArgs = Get-QmEngineArguments -InstallDir 'C:\Program Files\QuMeter' -DataDir $roData
+    Assert-True ($roArgs -match [regex]::Escape((Join-QmWinPath $roData 'config.json'))) 'read-only install engine args use data-dir config'
+    Assert-True ($roArgs -match 'QuMeterEngine\.ps1') 'read-only install still invokes engine script'
+    $roXml = [xml](New-QmTaskXml -Schedule (Get-QmDefaultConfig).schedule -InstallDir 'C:\Program Files\QuMeter' -DataDir $roData -RunAs CurrentUser -StartDate ([datetime]'2026-11-14'))
+    $nsRo = New-Object System.Xml.XmlNamespaceManager($roXml.NameTable); $nsRo.AddNamespace('t','http://schemas.microsoft.com/windows/2004/02/mit/task')
+    Assert-Eq $roXml.SelectSingleNode('//t:WorkingDirectory',$nsRo).InnerText $roData 'read-only task working directory is data dir'
+
+    $env:QUMETER_FORCE_PACKAGED = '1'
+    $script:QmPackageProbeDone = $false
+    Assert-True (Test-QmIsPackaged) 'force packaged flag'
+    $pkgData = Join-Path $tmp 'pkg-data'
+    New-Item -ItemType Directory -Path $pkgData -Force | Out-Null
+    $env:QUMETER_DATA_DIR = $pkgData
+    $tx = New-QmTaskXml -Schedule (Get-QmDefaultConfig).schedule -InstallDir 'C:\Packaged\QuMeter' -DataDir $pkgData -RunAs CurrentUser -StartDate ([datetime]'2026-11-14')
+    $docPkg = [xml]$tx
+    $nsPkg = New-Object System.Xml.XmlNamespaceManager($docPkg.NameTable); $nsPkg.AddNamespace('t','http://schemas.microsoft.com/windows/2004/02/mit/task')
+    Assert-Eq $docPkg.SelectSingleNode('//t:Command',$nsPkg).InnerText '%LOCALAPPDATA%\Microsoft\WindowsApps\QuMeter.exe' 'packaged task uses app execution alias'
+    Assert-True ($tx -match '--engine') 'packaged task uses --engine'
+    Assert-True ($docPkg.SelectSingleNode('//t:Arguments',$nsPkg).InnerText -match [regex]::Escape((Join-QmWinPath $pkgData 'config.json'))) 'packaged task passes data-dir config'
+    Assert-Eq $docPkg.SelectSingleNode('//t:WorkingDirectory',$nsPkg).InnerText $pkgData 'packaged task working directory is data dir'
+    Assert-True ($tx -notmatch 'powershell\.exe') 'packaged task does not use powershell.exe'
+} finally {
+    if ($null -eq $prevData -or $prevData -eq '') { Remove-Item Env:\QUMETER_DATA_DIR -ErrorAction SilentlyContinue } else { $env:QUMETER_DATA_DIR = $prevData }
+    if ($null -eq $prevForce -or $prevForce -eq '') { Remove-Item Env:\QUMETER_FORCE_PACKAGED -ErrorAction SilentlyContinue } else { $env:QUMETER_FORCE_PACKAGED = $prevForce }
+    $script:QmPackageProbeDone = $false
+}
+
 Write-Host ''
 Write-Host "Results: $($script:passed) passed, $($script:failed) failed"
 if ($script:failed -gt 0) { exit 1 }

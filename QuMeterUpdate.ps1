@@ -10,7 +10,14 @@ $script:QmUpdateDownloadTimeoutMs = 60000
 function Get-QmAppPayloadFiles {
     # Files the updater replaces. User data (settings.json, config.json, devices.txt, mps-import.json, output, logs) is left alone.
     # e-automate.mapping.json is only copied when the install does not already have one.
-    @('QuMeter.bat', 'QuMeter.ps1', 'QuMeterCore.ps1', 'QuMeterEngine.ps1', 'QuMeterUpdate.ps1', 'QuSnmp.cs', 'QuSnmp.ps1', 'README.md')
+    @('QuMeter.bat', 'QuMeter.ps1', 'QuMeterCore.ps1', 'QuMeterEngine.ps1', 'QuMeterUpdate.ps1', 'QuSnmp.cs', 'QuSnmp.ps1', 'QuSnmp.dll', 'QuMeter.exe', 'QuMeter.ico', 'README.md')
+}
+
+function Test-QmUpdatesAllowed {
+    if (Get-Command Test-QmIsPackaged -ErrorAction SilentlyContinue) {
+        if (Test-QmIsPackaged) { return $false }
+    }
+    return $true
 }
 
 function Get-QmUserDataFileNames {
@@ -371,6 +378,9 @@ function Install-QmUpdateFromRelease {
         [int]$WaitPid,
         [switch]$Relaunch
     )
+    if (-not (Test-QmUpdatesAllowed)) {
+        throw (Get-QmStoreUpdateMessage)
+    }
     if (-not $Release.AssetUrl) {
         throw "The GitHub release for QuMeter $($Release.Version) does not include $( $Release.ExpectedZipName ). Attach that zip when you publish the release."
     }

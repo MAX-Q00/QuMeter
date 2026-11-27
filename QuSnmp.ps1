@@ -7,6 +7,11 @@ if (-not $script:QuSnmpRoot) { $script:QuSnmpRoot = Split-Path -Parent $MyInvoca
 
 function Initialize-QuSnmp {
     if ('QuMeterSnmp.SnmpClient' -as [type]) { return }
+    $dll = Join-Path $script:QuSnmpRoot 'QuSnmp.dll'
+    if (Test-Path -LiteralPath $dll) {
+        Add-Type -Path $dll -ErrorAction Stop
+        return
+    }
     $cs = Join-Path $script:QuSnmpRoot 'QuSnmp.cs'
     if (-not (Test-Path -LiteralPath $cs)) { throw "QuSnmp.cs not found at $cs" }
     $refs = @('System.dll', 'System.Core.dll')
