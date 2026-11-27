@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Management.Automation;
+using System.Management.Automation.Runspaces;
 using System.Reflection;
 using System.Threading;
 using System.Windows.Forms;
@@ -51,6 +52,7 @@ namespace QuSpace.QuMeter
                     }
                 }
 
+                Log("start args=[" + string.Join(" ", args) + "] appDir=" + appDir + " cwd=" + Environment.CurrentDirectory);
                 string script = Path.Combine(appDir, engine ? "QuMeterEngine.ps1" : "QuMeter.ps1");
                 if (!File.Exists(script))
                 {
@@ -58,10 +60,13 @@ namespace QuSpace.QuMeter
                     return 1;
                 }
 
-                return RunScript(appDir, script, engine, config, progress, trigger);
+                int rc = RunScript(appDir, script, engine, config, progress, trigger);
+                Log("exit rc=" + rc);
+                return rc;
             }
             catch (Exception ex)
             {
+                Log("FATAL " + ex);
                 try
                 {
                     MessageBox.Show(ex.Message, "QuMeter", MessageBoxButtons.OK, MessageBoxIcon.Error);
@@ -71,11 +76,32 @@ namespace QuSpace.QuMeter
             }
         }
 
+        private static void Log(string msg)
+        {
+            try
+            {
+                string dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "QuMeter");
+                Directory.CreateDirectory(dir);
+                File.AppendAllText(Path.Combine(dir, "startup.log"), DateTime.Now.ToString("s") + " " + msg + Environment.NewLine);
+            }
+            catch { }
+        }
+
         private static int RunScript(string appDir, string scriptPath, bool engine, string config, string progress, string trigger)
         {
             // Host Windows PowerShell 5.1 in-process on this STA thread (required for WinForms).
+            // The in-process host otherwise obeys the machine's execution policy (Restricted by default),
+            // which blocks the unsigned package scripts and made the app exit silently. Bypass applies to this process only.
+            InitialSessionState iss = InitialSessionState.CreateDefault();
+            iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
+            using (Runspace rs = RunspaceFactory.CreateRunspace(iss))
+            {
+            rs.ApartmentState = ApartmentState.STA;
+            rs.ThreadOptions = PSThreadOptions.UseCurrentThread;
+            rs.Open();
             using (PowerShell ps = PowerShell.Create())
             {
+            ps.Runspace = rs;
                 ps.Runspace.SessionStateProxy.Path.SetLocation(appDir);
 
                 if (engine)
@@ -112,10 +138,17 @@ namespace QuSpace.QuMeter
                         Console.Error.WriteLine(rex.Message);
                         return 1;
                     }
+                    Log("RuntimeException " + rex);
                     MessageBox.Show(rex.Message, "QuMeter", MessageBoxButtons.OK, MessageBoxIcon.Error);
                     return 1;
                 }
 
+                foreach (var err in ps.Streams.Error) Log("PS error: " + err);
+                if (!engine && ps.HadErrors && ps.Streams.Error.Count > 0)
+                {
+                    try { MessageBox.Show("QuMeter could not start:\n\n" + ps.Streams.Error[0], "QuMeter", MessageBoxButtons.OK, MessageBoxIcon.Error); } catch { }
+                    return 1;
+                }
                 if (ps.HadErrors)
                 {
                     foreach (var err in ps.Streams.Error)
@@ -141,6 +174,7 @@ namespace QuSpace.QuMeter
                 }
 
                 return Environment.ExitCode != 0 ? Environment.ExitCode : 0;
+            }
             }
         }
 
