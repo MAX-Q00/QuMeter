@@ -5,7 +5,7 @@
 $script:QmCoreRoot = $PSScriptRoot
 if (-not $script:QmCoreRoot) { $script:QmCoreRoot = Split-Path -Parent $MyInvocation.MyCommand.Path }
 # Single source of truth for the app version. Bump this before tagging a GitHub release.
-$script:QmVersion = '2.2.4'
+$script:QmVersion = '2.2.5'
 $script:QmPublisher = 'QuSpace Studios LLC'
 $script:QmProductName = 'QuMeter'
 $script:QmCopyrightYear = '2026'
@@ -387,58 +387,159 @@ function ConvertTo-QmMpsHeaderKey {
     return $s.Trim()
 }
 
-function Get-QmMpsFieldMap {
-    # Known MPS / fleet-report header aliases. Keys are Normalize-QmMpsHeader results.
-    $map = @{}
-    $pairs = @{
-        CustomerCode = @(
-            'customer code', 'customercode', 'cust code', 'account code', 'customer id',
-            'account id', 'cust id', 'customer no', 'customer number', 'account number'
-        )
-        Customer = @(
-            'customer description', 'customer', 'customer name', 'customer desc',
-            'account', 'account name', 'customername', 'company', 'company name',
-            'client', 'client name', 'site customer'
-        )
-        Brand = @('brand', 'manufacturer', 'make', 'vendor', 'mfr', 'mfg')
-        Model = @('model', 'model name', 'modelname', 'product', 'product name', 'productname')
-        Serial = @(
-            'serialnumber', 'serial number', 'serial', 'serial no', 'serialno',
-            'serial num', 'serialnum', 's n', 'sn'
-        )
-        AssetNumber = @(
-            'assetnumber', 'asset number', 'asset', 'asset no', 'assetno',
-            'equipment number', 'equipment no', 'equip no', 'equipmentnumber', 'equip number'
-        )
-        Ip = @(
-            'ip address', 'ipaddress', 'ip', 'ip addr', 'ipv4', 'host ip',
-            'printer ip', 'ipaddressv4', 'tcp ip address', 'tcpip address'
-        )
-        Contact = @('contact', 'contact name', 'contactname')
-        SystemName = @(
-            'sytem name', 'system name', 'systemname', 'hostname', 'host name',
-            'sysname', 'device name', 'devicename', 'dns name', 'computer name', 'host'
-        )
-        Office = @('office', 'location', 'site', 'branch', 'office name')
-        Department = @('department', 'dept', 'department name')
-        LastUpdate = @(
-            'last update', 'last updated', 'lastupdated', 'last seen', 'lastseen',
-            'updated', 'date updated', 'last meter date'
-        )
-        DaysStale = @('days stale', 'daysstale', 'stale days', 'days since update', 'days since last update')
-        Total = @('total count', 'totalcount', 'total pages', 'totalpages', 'total', 'lifetime', 'lifetime total')
-        Mono = @('mono count', 'monocount', 'mono pages', 'monopages', 'mono', 'bw', 'b w', 'black', 'black white')
-        Color = @('color count', 'colorcount', 'color pages', 'colorpages', 'color', 'colour', 'colour count')
+function Get-DefaultMpsImportMapping {
+    # Default MPS / fleet-report header aliases. Keys under fields are logical names;
+    # values are header labels (normalized when building the lookup map).
+    @{
+        fields = @{
+            CustomerCode = @(
+                'customer code', 'customercode', 'cust code', 'account code', 'customer id',
+                'account id', 'cust id', 'customer no', 'customer number', 'account number'
+            )
+            Customer = @(
+                'customer description', 'customer', 'customer name', 'customer desc',
+                'account', 'account name', 'customername', 'company', 'company name',
+                'client', 'client name', 'site customer'
+            )
+            Brand = @('brand', 'manufacturer', 'make', 'vendor', 'mfr', 'mfg')
+            Model = @('model', 'model name', 'modelname', 'product', 'product name', 'productname')
+            Serial = @(
+                'serialnumber', 'serial number', 'serial', 'serial no', 'serialno',
+                'serial num', 'serialnum', 's n', 'sn'
+            )
+            AssetNumber = @(
+                'assetnumber', 'asset number', 'asset', 'asset no', 'assetno',
+                'equipment number', 'equipment no', 'equip no', 'equipmentnumber', 'equip number'
+            )
+            Ip = @(
+                'ip address', 'ipaddress', 'ip', 'ip addr', 'ipv4', 'host ip',
+                'printer ip', 'ipaddressv4', 'tcp ip address', 'tcpip address'
+            )
+            Contact = @('contact', 'contact name', 'contactname')
+            SystemName = @(
+                'sytem name', 'system name', 'systemname', 'hostname', 'host name',
+                'sysname', 'device name', 'devicename', 'dns name', 'computer name', 'host'
+            )
+            Office = @('office', 'location', 'site', 'branch', 'office name')
+            Department = @('department', 'dept', 'department name')
+            LastUpdate = @(
+                'last update', 'last updated', 'lastupdated', 'last seen', 'lastseen',
+                'updated', 'date updated', 'last meter date'
+            )
+            DaysStale = @('days stale', 'daysstale', 'stale days', 'days since update', 'days since last update')
+            Total = @('total count', 'totalcount', 'total pages', 'totalpages', 'total', 'lifetime', 'lifetime total')
+            Mono = @('mono count', 'monocount', 'mono pages', 'monopages', 'mono', 'bw', 'b w', 'black', 'black white')
+            Color = @('color count', 'colorcount', 'color pages', 'colorpages', 'color', 'colour', 'colour count')
+        }
+        notes = 'Header aliases for Import list (MPS). Each field lists alternate column titles QuMeter accepts. Edit aliases to match your fleet-report headers, then re-import.'
     }
-    foreach ($field in $pairs.Keys) {
-        foreach ($alias in $pairs[$field]) { $map[$alias] = $field }
+}
+
+function Get-QmMpsImportMappingPath {
+    param([string]$AppDir)
+    if ([string]::IsNullOrWhiteSpace($AppDir)) { $AppDir = $script:QmCoreRoot }
+    return (Join-Path $AppDir 'mps-import.mapping.json')
+}
+
+function Read-MpsImportMapping {
+    param([string]$Path)
+    $map = Get-DefaultMpsImportMapping
+    if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { return $map }
+    $raw = Get-Content -LiteralPath $Path -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ($null -ne $raw.notes -and "$($raw.notes)" -ne '') { $map.notes = "$($raw.notes)" }
+    if ($raw.fields) {
+        foreach ($field in @($map.fields.Keys)) {
+            $val = $raw.fields.$field
+            if ($null -eq $val) { continue }
+            $aliases = @(ConvertTo-QmMpsAliasList $val)
+            if ($aliases.Count -gt 0) { $map.fields[$field] = $aliases }
+        }
+        foreach ($prop in @($raw.fields.PSObject.Properties)) {
+            if ($map.fields.ContainsKey($prop.Name)) { continue }
+            $aliases = @(ConvertTo-QmMpsAliasList $prop.Value)
+            if ($aliases.Count -gt 0) { $map.fields[$prop.Name] = $aliases }
+        }
+    }
+    return $map
+}
+
+function ConvertTo-QmMpsAliasList {
+    # Returns individual alias strings (pipeline-friendly; do not unary-comma wrap).
+    param($Value)
+    $list = New-Object System.Collections.Generic.List[string]
+    if ($null -eq $Value) { return @() }
+    if ($Value -is [string]) {
+        $t = $Value.Trim()
+        if ($t) { $list.Add($t) }
+        return @($list.ToArray())
+    }
+    foreach ($item in @($Value)) {
+        if ($null -eq $item) { continue }
+        if ($item -is [string]) {
+            $t = $item.Trim()
+            if ($t) { $list.Add($t) }
+            continue
+        }
+        # Nested arrays from ConvertFrom-Json
+        if (($item -is [System.Collections.IEnumerable]) -and -not ($item -is [string])) {
+            foreach ($inner in @($item)) {
+                if ($null -eq $inner) { continue }
+                $t = "$inner".Trim()
+                if ($t) { $list.Add($t) }
+            }
+            continue
+        }
+        $t = "$item".Trim()
+        if ($t) { $list.Add($t) }
+    }
+    return @($list.ToArray())
+}
+
+function Save-MpsImportMapping {
+    param([hashtable]$Mapping, [string]$Path)
+    $dir = Split-Path -Parent $Path
+    if ($dir -and -not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+    ($Mapping | ConvertTo-Json -Depth 6) | Set-Content -LiteralPath $Path -Encoding UTF8
+}
+
+function Ensure-MpsImportMappingFile {
+    param([string]$Path)
+    if (-not $Path) { return $null }
+    if (Test-Path -LiteralPath $Path) { return $Path }
+    Save-MpsImportMapping -Mapping (Get-DefaultMpsImportMapping) -Path $Path
+    return $Path
+}
+
+function Get-QmMpsFieldMap {
+    # Known MPS / fleet-report header aliases. Keys are ConvertTo-QmMpsHeaderKey results.
+    param([hashtable]$Mapping)
+    if (-not $Mapping) { $Mapping = Get-DefaultMpsImportMapping }
+    $map = @{}
+    $fields = $Mapping['fields']
+    if (-not $fields) { return $map }
+    foreach ($field in @($fields.Keys)) {
+        foreach ($alias in @(ConvertTo-QmMpsAliasList $fields[$field])) {
+            $key = ConvertTo-QmMpsHeaderKey ([string]$alias)
+            if ($key -and -not $map.ContainsKey($key)) { $map[$key] = $field }
+        }
     }
     return $map
 }
 
 function ConvertTo-QmMpsColumnIndex {
-    param([string[]]$Headers)
-    $map = Get-QmMpsFieldMap
+    param(
+        [string[]]$Headers,
+        [hashtable]$FieldMap,
+        [string]$MappingPath
+    )
+    $map = $FieldMap
+    if (-not $map) {
+        $mapping = $null
+        if ($MappingPath) { $mapping = Read-MpsImportMapping -Path $MappingPath }
+        elseif ($script:QmMpsImportMappingPath) { $mapping = Read-MpsImportMapping -Path $script:QmMpsImportMappingPath }
+        else { $mapping = Get-DefaultMpsImportMapping }
+        $map = Get-QmMpsFieldMap -Mapping $mapping
+    }
     $index = @{}
     for ($i = 0; $i -lt $Headers.Count; $i++) {
         $key = ConvertTo-QmMpsHeaderKey $Headers[$i]
@@ -460,13 +561,13 @@ function Test-QmMpsHeaderRow {
 }
 
 function Find-QmMpsHeaderRow {
-    param([object[]]$Rows, [int]$MaxScan = 40)
+    param([object[]]$Rows, [int]$MaxScan = 40, [string]$MappingPath, [hashtable]$FieldMap)
     $limit = [math]::Min($Rows.Count, $MaxScan)
     $best = $null
     $bestScore = -1
     for ($i = 0; $i -lt $limit; $i++) {
         $headers = @($Rows[$i] | ForEach-Object { "$_" })
-        $idx = ConvertTo-QmMpsColumnIndex $headers
+        $idx = ConvertTo-QmMpsColumnIndex -Headers $headers -FieldMap $FieldMap -MappingPath $MappingPath
         if (-not (Test-QmMpsHeaderRow $idx)) { continue }
         $score = $idx.Keys.Count
         if ($idx.ContainsKey('Ip')) { $score += 10 }
@@ -563,8 +664,8 @@ function Test-QmMpsRowEmpty {
 }
 
 function ConvertTo-QmMpsImportRows {
-    param([object[]]$TableRows)
-    $found = Find-QmMpsHeaderRow -Rows $TableRows
+    param([object[]]$TableRows, [string]$MappingPath, [hashtable]$FieldMap)
+    $found = Find-QmMpsHeaderRow -Rows $TableRows -MappingPath $MappingPath -FieldMap $FieldMap
     if (-not $found) {
         throw 'This file does not look like an MPS list. A header row with an IP column (or customer plus model/serial) was not found.'
     }
@@ -878,9 +979,11 @@ function New-QmMpsImportResult {
     param(
         [object[]]$TableRows,
         [string]$SourceName = '',
-        [string]$SheetName = ''
+        [string]$SheetName = '',
+        [string]$MappingPath,
+        [hashtable]$FieldMap
     )
-    $parsed = ConvertTo-QmMpsImportRows -TableRows $TableRows
+    $parsed = ConvertTo-QmMpsImportRows -TableRows $TableRows -MappingPath $MappingPath -FieldMap $FieldMap
     $customers = @(Get-QmMpsCustomerNames $parsed.Rows)
     return [pscustomobject]@{
         SourceName   = $SourceName
@@ -899,14 +1002,21 @@ function New-QmMpsImportResult {
 function Import-QmMpsListFromCsvText {
     param(
         [Parameter(Mandatory)][string]$Text,
-        [string]$SourceName = 'memory.csv'
+        [string]$SourceName = 'memory.csv',
+        [string]$MappingPath,
+        [hashtable]$FieldMap
     )
     $csv = ConvertFrom-QmCsvText -Text $Text
-    return (New-QmMpsImportResult -TableRows $csv.Rows -SourceName $SourceName)
+    return (New-QmMpsImportResult -TableRows $csv.Rows -SourceName $SourceName -MappingPath $MappingPath -FieldMap $FieldMap)
 }
 
 function Import-QmMpsList {
-    param([Parameter(Mandatory)][string]$Path, [string]$SheetName = '')
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [string]$SheetName = '',
+        [string]$MappingPath,
+        [hashtable]$FieldMap
+    )
     if (-not (Test-Path -LiteralPath $Path)) { throw "File not found: $Path" }
     $ext = [System.IO.Path]::GetExtension($Path)
     if ($ext -and $ext.Equals('.xls', [StringComparison]::OrdinalIgnoreCase)) {
@@ -915,10 +1025,10 @@ function Import-QmMpsList {
     $sourceName = [System.IO.Path]::GetFileName($Path)
     if ($ext -and $ext.Equals('.xlsx', [StringComparison]::OrdinalIgnoreCase)) {
         $sheetData = Read-QuXlsxSheetRows -Path $Path -SheetName $SheetName
-        return (New-QmMpsImportResult -TableRows $sheetData.Rows -SourceName $sourceName -SheetName ([string]$sheetData.SheetName))
+        return (New-QmMpsImportResult -TableRows $sheetData.Rows -SourceName $sourceName -SheetName ([string]$sheetData.SheetName) -MappingPath $MappingPath -FieldMap $FieldMap)
     }
     $text = [System.IO.File]::ReadAllText($Path)
-    return (Import-QmMpsListFromCsvText -Text $text -SourceName $sourceName)
+    return (Import-QmMpsListFromCsvText -Text $text -SourceName $sourceName -MappingPath $MappingPath -FieldMap $FieldMap)
 }
 
 function Get-QmMpsImportPath {
@@ -1013,10 +1123,86 @@ function Get-QmAutomateExperimentalArgb { return @(0xB0, 0x00, 0x20) }
 function Get-QmPrimaryButtonArgb { return @(25, 135, 84) }
 function Get-QmImportMpsButtonText { return 'Import list (MPS)...' }
 function Get-QmEditExportMappingButtonText { return 'Edit Export Mapping...' }
+function Get-QmEditImportMappingButtonText { return 'Edit Import Mapping...' }
 function Get-QmScanProgressText([int]$Done, [int]$Total) {
     return ('{0} / {1} IPs' -f [math]::Max(0, [int]$Done), [math]::Max(0, [int]$Total))
 }
 function Test-QmFilterChangeCanRun([bool]$Busy) { return -not [bool]$Busy }
+function Get-QmGridEditableColumns {
+    return @('IP', 'Serial', 'Model', 'Total', 'Mono', 'Color', 'Customer', 'Brand', 'Asset', 'System', 'SysDescr')
+}
+function Get-QmGridReadOnlyColumns {
+    return @('Status', 'Error')
+}
+function Test-QmGridColumnEditable([string]$ColumnName) {
+    return ((Get-QmGridEditableColumns) -contains $ColumnName)
+}
+function Get-QmGridColumnReadingProperty([string]$ColumnName) {
+    switch ($ColumnName) {
+        'IP' { return 'Ip' }
+        'Asset' { return 'AssetNumber' }
+        'System' { return 'SystemName' }
+        'Error' { return 'ErrorMessage' }
+        default { return $ColumnName }
+    }
+}
+function Test-QmGridMeterValue([string]$Value) {
+    if ([string]::IsNullOrWhiteSpace($Value)) { return $true }
+    $t = $Value.Trim()
+    return [bool]($t -match '^\d+$')
+}
+function Test-QmGridCellEditValue {
+    param([string]$ColumnName, [string]$Value)
+    if ($ColumnName -eq 'IP') {
+        if ([string]::IsNullOrWhiteSpace($Value)) { return [pscustomobject]@{ Ok = $true; Normalized = ''; Message = '' } }
+        if (-not (Test-QmIpv4Address $Value)) {
+            return [pscustomobject]@{ Ok = $false; Normalized = $Value; Message = 'IP must be a valid IPv4 address (or blank).' }
+        }
+        return [pscustomobject]@{ Ok = $true; Normalized = (ConvertTo-QmIpv4Address $Value); Message = '' }
+    }
+    if (@('Total', 'Mono', 'Color') -contains $ColumnName) {
+        if (-not (Test-QmGridMeterValue $Value)) {
+            return [pscustomobject]@{ Ok = $false; Normalized = $Value; Message = "$ColumnName must be a whole number (or blank)." }
+        }
+        $norm = ''
+        if (-not [string]::IsNullOrWhiteSpace($Value)) { $norm = $Value.Trim() }
+        return [pscustomobject]@{ Ok = $true; Normalized = $norm; Message = '' }
+    }
+    if (-not (Test-QmGridColumnEditable $ColumnName)) {
+        return [pscustomobject]@{ Ok = $false; Normalized = $Value; Message = "$ColumnName is read-only (computed from the scan or import)." }
+    }
+    $norm = ''
+    if ($null -ne $Value) { $norm = "$Value".Trim() }
+    return [pscustomobject]@{ Ok = $true; Normalized = $norm; Message = '' }
+}
+function Get-QmGridReadOnlyTooltip([string]$ColumnName) {
+    if ($ColumnName -eq 'Status') { return 'Status is set by scan or import and cannot be edited.' }
+    if ($ColumnName -eq 'Error') { return 'Error is set by scan or import and cannot be edited.' }
+    return ''
+}
+function ConvertTo-QmGridTsv {
+    param(
+        [object[]]$Rows,
+        [string[]]$Columns,
+        [switch]$IncludeHeader
+    )
+    $cols = @($Columns)
+    if ($cols.Count -eq 0) { $cols = Get-QmManualGridColumnOrder }
+    $lines = New-Object System.Collections.Generic.List[string]
+    if ($IncludeHeader) { $lines.Add(($cols -join "`t")) }
+    foreach ($row in @($Rows)) {
+        if ($null -eq $row) { continue }
+        $cells = foreach ($c in $cols) {
+            $prop = Get-QmGridColumnReadingProperty $c
+            $v = ''
+            try { $v = [string]$row.$prop } catch { $v = '' }
+            if ($c -eq 'IP' -and [string]::IsNullOrWhiteSpace($v)) { $v = 'no IP' }
+            $v -replace '[\t\r\n]+', ' '
+        }
+        $lines.Add(($cells -join "`t"))
+    }
+    return ($lines -join "`r`n")
+}
 function Save-QmTextAtomic {
     param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][string]$Text)
     $dir = Split-Path -Parent $Path

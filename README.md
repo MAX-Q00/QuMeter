@@ -22,6 +22,8 @@ Then export (e-automate is listed first, as recommended):
 - **Remarks**: an editable box on the Manual tab and the Automate Settings tab (default Imported by QuMeter). It is written to the e-automate Remarks column. Leave it empty for a blank field. Optional tokens, replaced per printer: {date} {time} {ip} {serial} {model}. Saved in settings.json and config.json (eaRemarks), so scheduled QuMeter Auto runs use the same text.
 - **Export results CSV**: the general scan record (date, time, IP, model, serial, meters, status, errors). Save dialogs open in the last export folder.
 - **Edit Export Mapping...** opens `e-automate.mapping.json` for custom column or meter-type names, or `"format": "advanced"`.
+- **Edit Import Mapping...** opens `mps-import.mapping.json` (created with defaults if missing) so you can change which MPS / fleet-report header names map to Customer, IP, Serial, and the other import fields. Re-import the list after editing.
+- **Results grid**: right-click for Add / Edit / Delete entry (multi-select delete with confirm), Copy cell or row(s), Select All, Paste into a cell, Rescan selected IP(s), Open device web page (`http://<IP>`), Export selected rows, and toggles for the existing timeout / serial filters. Right-click selects the row under the cursor. Double-click an editable cell to edit in place (Enter / leave commits, Esc cancels); IP and meter counts are validated. Status and Error stay read-only. Edits update the in-memory readings (and the saved MPS import when applicable) so exports reflect them.
 
 The **Tips** panel on the right explains which file to use and how. It can be hidden and resized.
 
@@ -90,7 +92,7 @@ This app never writes to the e-automate database and never calls an e-automate o
 ## Files
 
 - `QuMeter.ps1` GUI · `QuMeterEngine.ps1` headless run · `QuMeterCore.ps1` config/schedule/status/version · `QuMeterUpdate.ps1` GitHub Releases updater · `QuSnmp.cs`/`QuSnmp.ps1` SNMP + CSV/Excel exports
-- `config.json` Automate settings (no secrets) · `settings.json` Manual tab · `mps-import.json` last MPS list import (created at runtime) · `e-automate.mapping.json` column mapping
+- `config.json` Automate settings (no secrets) · `settings.json` Manual tab · `mps-import.json` last MPS list import (created at runtime) · `e-automate.mapping.json` export column mapping · `mps-import.mapping.json` Import list (MPS) header aliases
 - `scripts/New-QuMeterReleasePackage.ps1` builds the release zip the updater expects · `scripts/Install-QuMeterShortcut.ps1` creates or refreshes the Desktop shortcut
 - `tests\` box tests (`Test-QuSnmp.ps1`, `Test-QuMeterCore.ps1`, `Test-QuMeterUpdate.ps1`, SNMP simulator)
 
@@ -104,7 +106,7 @@ The app version lives in one place: `$script:QmVersion` in `QuMeterCore.ps1` (`G
 
 On startup, QuMeter checks the latest GitHub Release for [MAX-Q00/QuMeter](https://github.com/MAX-Q00/QuMeter/releases/latest) over HTTPS, unauthenticated, with a short timeout. If the machine is offline or no release exists yet, the check fails silently. If a newer version is published, you are asked whether to install it. **Check for updates** on the status bar runs the same check on demand and tells you when you are already current.
 
-If you choose to update, QuMeter downloads the release asset named `QuMeter-X.Y.Z.zip`, checks the size, and checks the SHA256 when the release provides one (GitHub's asset digest, or a `SHA256:` line in the release notes). It then starts a short helper, closes the window (so files are not in use), copies the previous app files into `backup/QuMeter-<old-version>/`, replaces the program files, and relaunches. `settings.json`, `config.json`, `devices.txt`, `mps-import.json`, output, and logs are left alone. An existing `e-automate.mapping.json` is not overwritten.
+If you choose to update, QuMeter downloads the release asset named `QuMeter-X.Y.Z.zip`, checks the size, and checks the SHA256 when the release provides one (GitHub's asset digest, or a `SHA256:` line in the release notes). It then starts a short helper, closes the window (so files are not in use), copies the previous app files into `backup/QuMeter-<old-version>/`, replaces the program files, and relaunches. `settings.json`, `config.json`, `devices.txt`, `mps-import.json`, output, and logs are left alone. Existing `e-automate.mapping.json` and `mps-import.mapping.json` files are not overwritten.
 
 Until you publish a GitHub Release, startup will not offer an update.
 

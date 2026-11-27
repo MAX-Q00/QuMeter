@@ -512,6 +512,40 @@ Assert-True (-not (Test-QmFilterChangeCanRun $true)) 'filter checkbox changes ar
 Assert-Eq (Get-QmScanProgressText 12 40) '12 / 40 IPs' 'scan progress shows the IP count on the bar'
 Assert-Eq (Get-QmScanProgressText 0 1) '0 / 1 IPs' 'scan progress starts at 0 / total IPs'
 Assert-Eq (Get-QmEditExportMappingButtonText) 'Edit Export Mapping...' 'Manual mapping button is Edit Export Mapping...'
+Assert-Eq (Get-QmEditImportMappingButtonText) 'Edit Import Mapping...' 'Manual import mapping button is Edit Import Mapping...'
+Assert-True ((Get-QmGridEditableColumns) -contains 'IP' -and (Get-QmGridEditableColumns) -contains 'Serial') 'IP and Serial are editable'
+Assert-True ((Get-QmGridReadOnlyColumns) -contains 'Status' -and (Get-QmGridReadOnlyColumns) -contains 'Error') 'Status and Error are read-only'
+$ipOk = Test-QmGridCellEditValue -ColumnName 'IP' -Value '10.0.0.5'
+Assert-True ($ipOk.Ok -and $ipOk.Normalized -eq '10.0.0.5') 'IP edit accepts IPv4'
+$ipBad = Test-QmGridCellEditValue -ColumnName 'IP' -Value 'not-an-ip'
+Assert-True (-not $ipBad.Ok) 'IP edit rejects invalid values'
+$meterBad = Test-QmGridCellEditValue -ColumnName 'Total' -Value '12x'
+Assert-True (-not $meterBad.Ok) 'meter edit rejects non-numeric values'
+$tsv = ConvertTo-QmGridTsv -Rows @([pscustomobject]@{ Ip = '10.0.0.1'; Status = 'OK'; Serial = 'S1'; Model = 'M1'; Total = '1'; Mono = ''; Color = ''; Customer = ''; Brand = ''; AssetNumber = ''; SystemName = ''; SysDescr = ''; ErrorMessage = '' }) -IncludeHeader
+Assert-True ($tsv -match '^IP\tStatus' -and $tsv -match '10\.0\.0\.1') 'grid TSV includes header and IP'
+
+Write-Host '=== MPS import mapping defaults ==='
+$defMap = Get-DefaultMpsImportMapping
+Assert-True ($defMap.fields.ContainsKey('Ip') -and $defMap.fields.ContainsKey('Serial')) 'default import mapping has Ip and Serial'
+$built = Get-QmMpsFieldMap -Mapping $defMap
+Assert-True ($built.ContainsKey('ip address') -and $built['ip address'] -eq 'Ip') 'default field map resolves ip address'
+Assert-True ($built.ContainsKey('sytem name') -and $built['sytem name'] -eq 'SystemName') 'default field map keeps sytem name typo alias'
+$mapFile = Join-Path $tmp 'mps-import.mapping.json'
+Ensure-MpsImportMappingFile -Path $mapFile | Out-Null
+Assert-True (Test-Path -LiteralPath $mapFile) 'Ensure-MpsImportMappingFile creates defaults when missing'
+$loaded = Read-MpsImportMapping -Path $mapFile
+Assert-True ($loaded.fields.ContainsKey('Ip')) 'Read-MpsImportMapping loads created defaults'
+$customPath = Join-Path $tmp 'custom-mps-import.mapping.json'
+$custom = Get-DefaultMpsImportMapping
+$custom.fields.Ip = @('printer host', 'host addr')
+Save-MpsImportMapping -Mapping $custom -Path $customPath
+$customCsv = "Customer Description,printer host,Serial Number`nAcme,10.9.9.9,SN-CUSTOM`n"
+$impCustom = Import-QmMpsListFromCsvText -Text $customCsv -MappingPath $customPath
+Assert-Eq $impCustom.TotalRows 1 'custom import mapping finds IP via printer host'
+Assert-Eq $impCustom.Rows[0].Ip '10.9.9.9' 'custom import mapping maps printer host to Ip'
+$missing = Read-MpsImportMapping -Path (Join-Path $tmp 'no-such-mapping.json')
+Assert-True ($missing.fields.ContainsKey('Ip')) 'missing import mapping file falls back to defaults'
+
 $atomicDir = Join-Path ([IO.Path]::GetTempPath()) ('qm-atomic-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $atomicDir -Force | Out-Null
 $atomicPath = Join-Path $atomicDir 'settings.json'
