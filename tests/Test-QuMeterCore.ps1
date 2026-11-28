@@ -65,7 +65,7 @@ Assert-Eq (Read-QmConfig (Join-Path $tmp 'remarks.json')).eaRemarks 'Hello, "sho
 $cBlank = Get-QmDefaultConfig; $cBlank.targets = @('10.0.0.1'); $cBlank.eaRemarks = ''
 Save-QmConfig -Config $cBlank -Path (Join-Path $tmp 'remarks-blank.json')
 Assert-Eq (Read-QmConfig (Join-Path $tmp 'remarks-blank.json')).eaRemarks '' 'empty eaRemarks stays blank'
-Assert-Eq $r.outputFolder '\\fileserver\meters' 'UNC output round-trip'
+Assert-Eq $r.outputFolder '\\fileserver\meters' 'network share output round-trip'
 Assert-Eq $r.schedule.frequency 'Monthly' 'frequency round-trip'
 Assert-Eq $r.schedule.dayOfMonth 'Last' 'dayOfMonth round-trip'
 $one = Get-QmDefaultConfig; $one.targets = @('10.9.9.9'); Save-QmConfig $one (Join-Path $tmp 'one.json')
