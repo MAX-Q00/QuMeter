@@ -1,0 +1,20 @@
+{
+  "full": "QuMeter is a fast, lightweight Windows desktop utility for managed print providers, copier technicians, and IT teams who need accurate lifetime meter counts from networked printers without deploying heavy cloud agents.\n\nEnter individual IP addresses, IP ranges (such as 10.0.1.1-50), or CIDR subnets, or import an existing MPS fleet list (.xlsx or .csv) and filter by customer. QuMeter queries devices over SNMPv1 or SNMPv2c using standard Printer-MIB and Host-Resources-MIB OIDs—with built-in HP private MIB fallbacks—to pull serial numbers, device models, sysDescr, total lifetime impressions, and monochrome/color page counts.\n\nExport clean, ready-to-use files with one click:\n- e-automate Meter Import workbooks (.xlsx) and CSVs (Basic and Advanced layouts, with customizable column mapping and token-based remarks)\n- Multi-sheet Excel workbooks (.xlsx) with Results, e-automate, MPS, FMAudit, and import instructions—no Excel installation required\n- Standard MPS CSVs and FMAudit-style CSVs\n\nNeed hands-off collection? Use the built-in Automate tab (formerly QuMeter Auto) to save your printer list and schedule unattended Daily, Weekly, or Monthly meter pulls through Windows Task Scheduler, writing dated CSVs, logs, and optional MPS drop-folder outputs—including to shared network folders.\n\nAll scanning and data stay completely on your local computer and local network.",
+  "short": "Read lifetime meter counts from networked printers over SNMP and export ready-to-import Excel, CSV, e-automate, and MPS reports—manually or on an automated schedule.",
+  "feats": [
+    "Bulk SNMPv1/v2c meter discovery across IP lists, ranges, and CIDR subnets with live progress, cancellation, and timeout/no-serial filtering.",
+    "One-click exports to e-automate (.xlsx and CSV, Basic or Advanced), multi-sheet Excel (.xlsx), standard MPS CSV, and FMAudit-style CSV.",
+    "Import MPS fleet lists (.xlsx or .csv), filter scans by customer, and merge live SNMP meter readings with customer, asset, and serial details.",
+    "Customizable e-automate export mappings and dynamic meter remarks with {date}, {time}, {ip}, {serial}, and {model} tokens.",
+    "Built-in Automate tab to run scheduled Daily, Weekly, or Monthly unattended meter pulls to local folders or network shares."
+  ],
+  "kw": [
+    "printer meter",
+    "SNMP",
+    "e-automate",
+    "print fleet",
+    "MPS",
+    "page counter",
+    "copier meters"
+  ]
+}

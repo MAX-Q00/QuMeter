@@ -179,7 +179,7 @@ if ($mpsFolder) {
 }
 foreach ($w in $status.writeErrors) {
     $hint = ''
-    if ($w -match '^\S*\\\\' -or $w -match '\\\\') { $hint = ' (UNC share: if the task runs as SYSTEM, the computer account needs write access; a service account is recommended)' }
+    if ($w -match '^\S*\\\\' -or $w -match '\\\\') { $hint = ' (network share: if the task runs as SYSTEM, the computer account needs write access; a service account is recommended)' }
     Log Error "WRITE: $w$hint"
 }
 

@@ -191,7 +191,7 @@ function New-Tips($p, $text, $x, $y, $w, $h, $anchor) {
 function Msg($text, $icon = 'Information', $title = 'QuMeter') { [void][Windows.Forms.MessageBox]::Show($text, $title, 'OK', $icon) }
 function Ask($text) { return ([Windows.Forms.MessageBox]::Show($text, 'QuMeter', 'YesNo', 'Question') -eq 'Yes') }
 function Browse-Folder($box) {
-    $d = New-Object Windows.Forms.FolderBrowserDialog -Property @{ Description = 'Choose a folder (you can also type a UNC path like \\server\share\meters)' }
+    $d = New-Object Windows.Forms.FolderBrowserDialog -Property @{ Description = 'Choose a folder (you can also type a network path like \\server\share\meters)' }
     if ($d.ShowDialog() -eq 'OK') { $box.Text = $d.SelectedPath }
 }
 function Test-IsAdmin { ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator) }
@@ -1458,8 +1458,8 @@ Scheduled runs write a CSV. To import it, paste its rows into the official EA_Me
 Meter remarks come from the Meter remarks box on this Settings tab (default Imported by QuMeter). Leave it empty for a blank remarks field. Optional tokens, replaced per printer: {date} {time} {ip} {serial} {model}. The "Only show/include devices that are reporting serial numbers(Usually Only Printers)" box is checked by default and is the same setting as on the Manual tab. When it is checked, devices with a blank or placeholder serial (N/A, unknown, 0) are left out of the general, e-automate, and MPS files. Click Save settings so scheduled QuMeter Auto runs use the remarks and this checkbox (they are stored in config.json).
 
 Output to a network share
-Output and MPS folders can be UNC paths like \\fileserver\meters so files land where you and e-automate can reach them.
-If the task runs as SYSTEM it uses the computer account (e.g. SERVER$) on the network. SYSTEM can't write to a share unless that computer account has write rights on the share and folder. For UNC output, a domain service account with write access is recommended (Run as > Service account). Relative folders are resolved from the QuMeter app folder (Saves to: shows the full path). If the task runs as SYSTEM, confirm that account can write there.
+Output and MPS folders can be network paths like \\fileserver\meters so files land where you and e-automate can reach them.
+If the task runs as SYSTEM it uses the computer account (e.g. SERVER$) on the network. SYSTEM can't write to a share unless that computer account has write rights on the share and folder. For network-share output, a domain service account with write access is recommended (Run as > Service account). Relative folders are resolved from the QuMeter app folder (Saves to: shows the full path). If the task runs as SYSTEM, confirm that account can write there.
 
 This PC (Schedule tab)
 Install / Update creates the Windows task "QuMeter Auto". Current user = no admin needed but only while logged on. SYSTEM / service account = runs with nobody logged on (admin needed to install).

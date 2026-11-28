@@ -37,7 +37,7 @@ Sub-tabs:
 | --- | --- |
 | **Settings** | Printer list, community/version/port/timeout/retries/parallelism, output folder, MPS drop folder, log folder, retention days, e-automate format + meter Source + mapping file. Save settings validates and writes `config.json`. |
 | **Schedule (this PC)** | Task name, Daily/Weekly/Monthly, time (this PC, 24-hour), weekday or day of month (1-28 or Last), and run as (current user / SYSTEM / service account). Install/Update, Remove (only when a task exists), and status. **Restart as administrator** appears only when the task would run as SYSTEM or a service account. |
-| **Tips** | How to use the output, UNC shares, and the Schedule tab. |
+| **Tips** | How to use the output, network shares, and the Schedule tab. |
 
 ### Engine
 
@@ -49,7 +49,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File QuMeterEngine.ps1 -ConfigPat
 
 Each run writes `QuMeter_<stamp>.csv`, `QuMeter_eautomate_<stamp>.csv`, optional `QuMeter_mps_<stamp>.csv`, `logs\QuMeter_<date>.log`, and `logs\status.json` (last-run details the Automate tab reads). Exit codes: 0 ok, 1 failed, 2 completed with errors. Retention deletes old `QuMeter_*` files in the output and log folders, never in the MPS folder.
 
-A service-account password is given to Windows Task Scheduler only; it is never written to disk. Output can be a UNC share. A task running as SYSTEM writes to shares as the computer account (`SERVER$`), so use a service account for UNC output unless that account has rights.
+A service-account password is given to Windows Task Scheduler only; it is never written to disk. Output can be a network share. A task running as SYSTEM writes to shares as the computer account (`SERVER$`), so use a service account for network-share output unless that account has rights.
 
 ## What it reads
 
